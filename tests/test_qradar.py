@@ -130,6 +130,7 @@ class TestArielAsyncFlow(unittest.TestCase):
                 events = self.client.run_aql_query("SELECT * FROM events LAST 1 HOURS")
 
         self.assertIsNotNone(events)
+        assert events is not None  # narrow type for Pylance
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["logsourceid"], 100)
         self.assertEqual(events[0]["total_event_count"], 5000)

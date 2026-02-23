@@ -155,7 +155,9 @@ class QRadarClient(SIEMClient):
                 "config/event_sources/log_source_management/log_source_types", page_size=1000
             )
             for t in types_list:
-                types_map[t.get("id")] = t.get("name", f"Unknown-{t.get('id')}")
+                type_id = t.get("id")
+                if type_id is not None:
+                    types_map[type_id] = t.get("name", f"Unknown-{type_id}")
         except Exception as e:
             logger.warning(f"Não foi possível obter tipos de log source: {e}")
         return types_map
