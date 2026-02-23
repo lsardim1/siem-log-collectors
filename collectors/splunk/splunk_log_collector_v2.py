@@ -308,35 +308,44 @@ class SplunkClient:
             return []
 
     def get_sourcetypes(self) -> List[str]:
-        """Retorna lista de sourcetypes conhecidos."""
+        """Retorna lista de sourcetypes conhecidos via SPL metadata.
+
+        Usa o comando '| metadata type=sourcetypes index=*' que é suportado
+        oficialmente pela Splunk REST API (não existe endpoint REST dedicado
+        para listar sourcetypes).
+        """
         try:
-            data = self._get(
-                "services/saved/sourcetypes",
-                params={"count": 0},
-            )
-            sourcetypes = [entry.get("name", "") for entry in data.get("entry", [])]
+            results = self.run_spl_query("| metadata type=sourcetypes index=*")
+            if results is None:
+                return []
+            sourcetypes = [r.get("sourcetype", "") for r in results if r.get("sourcetype")]
             logger.info(f"Total de sourcetypes registrados: {len(sourcetypes)}")
             return sourcetypes
         except Exception:
-            logger.debug("Endpoint saved/sourcetypes não disponível; sem inventário de sourcetypes.")
+            logger.debug("Não foi possível obter sourcetypes via metadata; sem inventário.")
             return []
 
     def get_data_inputs_summary(self) -> List[Dict]:
-        """Retorna resumo de data inputs (forwarders, monitored files, etc.)."""
+        """Retorna resumo de data inputs via SPL '| rest' (monitored files, etc.).
+
+        Usa '| rest /services/data/inputs/monitor' para listar inputs do tipo
+        file monitor, que é o endpoint documentado oficialmente pela Splunk.
+        """
         try:
-            data = self._get(
-                "services/data/inputs/all",
-                params={"count": 0},
+            results = self.run_spl_query(
+                "| rest /services/data/inputs/monitor "
+                "| table title, disabled, index, sourcetype"
             )
+            if results is None:
+                return []
             inputs_list = []
-            for entry in data.get("entry", []):
-                content = entry.get("content", {})
+            for r in results:
                 inputs_list.append({
-                    "name": entry.get("name", ""),
-                    "type": content.get("type", entry.get("name", "").split("/")[-1]),
-                    "disabled": content.get("disabled", False),
-                    "index": content.get("index", "default"),
-                    "sourcetype": content.get("sourcetype", ""),
+                    "name": r.get("title", ""),
+                    "type": "monitor",
+                    "disabled": r.get("disabled", "0") == "1",
+                    "index": r.get("index", "default"),
+                    "sourcetype": r.get("sourcetype", ""),
                 })
             logger.info(f"Total de data inputs: {len(inputs_list)}")
             return inputs_list
@@ -419,10 +428,10 @@ class SplunkClient:
             logger.debug(f"SPL job {sid}: {dispatch_state} ({float(done_progress)*100:.0f}%)")
             time.sleep(SPL_POLL_INTERVAL)
 
-        # Buscar resultados
+        # Buscar resultados (Search API v2 — padrão desde Splunk Enterprise 9.0.1)
         try:
             results_data = self._get(
-                f"services/search/jobs/{sid}/results",
+                f"services/search/v2/jobs/{sid}/results",
                 params={"count": MAX_RESULTS_PER_PAGE},
             )
             return results_data.get("results", [])
@@ -441,6 +450,9 @@ class SplunkClient:
         earliest = f"{start_time_ms / 1000:.3f}"
         latest = f"{end_time_ms / 1000:.3f}"
 
+        # NOTA: sum(len(_raw)) calcula o tamanho bruto dos eventos no index.
+        # Para bytes licenciados/ingeridos com precisão, use get_license_usage()
+        # que consulta _internal license_usage.log.
         spl = (
             'index=* '
             '| stats count as total_event_count, '
