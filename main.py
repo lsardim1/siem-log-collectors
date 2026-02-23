@@ -75,9 +75,11 @@ def run_qradar(args):
     db_file = args.db_file or config.get("db_file", "qradar_metrics.db")
     report_dir = args.report_dir or config.get("report_dir", DEFAULT_REPORT_DIR)
 
-    db = MetricsDB(db_file)
-
     if args.report_only:
+        if not os.path.exists(db_file):
+            print(f"ERRO: Banco de dados '{db_file}' não encontrado. Execute a coleta primeiro.")
+            sys.exit(1)
+        db = MetricsDB(db_file)
         reporter = ReportGenerator(
             db, report_dir,
             siem_name="qradar",
@@ -113,6 +115,7 @@ def run_qradar(args):
         logger.error(f"Não foi possível conectar ao QRadar: {e}")
         sys.exit(1)
 
+    db = MetricsDB(db_file)
     reporter = ReportGenerator(
         db, report_dir,
         siem_name="qradar",
@@ -176,9 +179,11 @@ def run_splunk(args):
     db_file = args.db_file or config.get("db_file", "splunk_metrics.db")
     report_dir = args.report_dir or config.get("report_dir", DEFAULT_REPORT_DIR)
 
-    db = MetricsDB(db_file)
-
     if args.report_only:
+        if not os.path.exists(db_file):
+            print(f"ERRO: Banco de dados '{db_file}' não encontrado. Execute a coleta primeiro.")
+            sys.exit(1)
+        db = MetricsDB(db_file)
         reporter = ReportGenerator(
             db, report_dir,
             siem_name="splunk",
@@ -202,6 +207,7 @@ def run_splunk(args):
                            verify_ssl=verify_ssl)
     client.test_connection()
 
+    db = MetricsDB(db_file)
     reporter = ReportGenerator(
         db, report_dir,
         siem_name="splunk",
