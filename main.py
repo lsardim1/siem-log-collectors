@@ -7,8 +7,11 @@ Uso:
     python main.py qradar --url https://qradar:443 --token SEC_TOKEN
     python main.py splunk --url https://splunk:8089 --token BEARER_TOKEN
     python main.py splunk --url https://splunk:8089 --username admin --password PASS
+    python main.py secops --sa-file /path/to/service-account.json --region us
+    python main.py secops --token BEARER_TOKEN --region southamerica-east1
     python main.py qradar --report-only --db-file mydb.db
     python main.py splunk --create-config
+    python main.py secops --create-config
 """
 
 import argparse
@@ -241,6 +244,112 @@ def run_splunk(args):
     )
 
 
+# ─── Google SecOps ───────────────────────────────────────────────────────────
+def run_secops(args):
+    """Executa coletor Google SecOps."""
+    from collectors.google_secops.client import (
+        GoogleSecOpsClient,
+        collect_inventory,
+        create_sample_config,
+        update_inventory_from_results,
+    )
+
+    setup_logging("secops", args.verbose)
+
+    if args.create_config:
+        create_sample_config(args.config or "secops_config.json")
+        return
+
+    # Carregar configuração
+    config = load_config(args.config or "")
+    sa_file = args.sa_file or config.get("service_account_file", "")
+    token = args.token or config.get("auth_token", "") or os.environ.get("SECOPS_TOKEN", "")
+    region = args.region or config.get("region", "us")
+    verify_ssl = config.get("verify_ssl", True)
+    collection_days = args.days or config.get("collection_days", DEFAULT_COLLECTION_DAYS)
+    interval_hours = args.interval or config.get("interval_hours", DEFAULT_INTERVAL_HOURS)
+    db_file = args.db_file or config.get("db_file", "secops_metrics.db")
+    report_dir = args.report_dir or config.get("report_dir", DEFAULT_REPORT_DIR)
+
+    if args.report_only:
+        if not os.path.exists(db_file):
+            print(f"ERRO: Banco de dados '{db_file}' não encontrado. Execute a coleta primeiro.")
+            sys.exit(1)
+        db = MetricsDB(db_file)
+        reporter = ReportGenerator(
+            db, report_dir,
+            siem_name="secops",
+            siem_display_name="Google SecOps",
+            source_label="Product (Vendor)",
+            type_label="Log Type",
+        )
+        reporter.generate_all_reports()
+        db.close()
+        return
+
+    if not sa_file and not token:
+        logger.error(
+            "Credenciais não informadas. Use --sa-file (Service Account JSON) "
+            "ou --token (Bearer Token), arquivo de config, ou env SECOPS_TOKEN."
+        )
+        sys.exit(1)
+
+    try:
+        client = GoogleSecOpsClient(
+            service_account_file=sa_file,
+            token=token,
+            region=region,
+            verify_ssl=verify_ssl,
+        )
+    except ImportError as e:
+        logger.error(str(e))
+        sys.exit(1)
+    except ValueError as e:
+        logger.error(str(e))
+        sys.exit(1)
+
+    try:
+        client.test_connection()
+    except Exception as e:
+        logger.error(f"Não foi possível conectar ao Google SecOps: {e}")
+        sys.exit(1)
+
+    db = MetricsDB(db_file)
+    reporter = ReportGenerator(
+        db, report_dir,
+        siem_name="secops",
+        siem_display_name="Google SecOps",
+        source_label="Product (Vendor)",
+        type_label="Log Type",
+    )
+
+    logger.info("=" * 70)
+    logger.info("  Google SecOps Log Ingestion Collector")
+    logger.info("=" * 70)
+    logger.info(f"  Região:             {region}")
+    logger.info(f"  Auth:               {'Service Account' if sa_file else 'Bearer Token'}")
+    logger.info(f"  Período de coleta:  {collection_days} dias")
+    logger.info(f"  Intervalo:          {interval_hours}h")
+    logger.info(f"  Banco de dados:     {db_file}")
+    logger.info(f"  Relatórios:         {report_dir}")
+    logger.info(f"  SSL Verify:         {verify_ssl}")
+    logger.info("=" * 70)
+
+    install_signal_handlers()
+
+    main_collection_loop(
+        client=client,
+        db=db,
+        reporter=reporter,
+        collection_days=float(collection_days),
+        interval_hours=float(interval_hours),
+        siem_name="secops",
+        siem_display_name="Google SecOps",
+        collect_inventory_func=collect_inventory,
+        post_collect_callback=update_inventory_from_results,
+    )
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 def build_parser() -> argparse.ArgumentParser:
     """Constrói o parser de argumentos."""
@@ -252,8 +361,10 @@ Exemplos:
   python main.py qradar --url https://qradar:443 --token SEC_TOKEN
   python main.py splunk --url https://splunk:8089 --token BEARER_TOKEN
   python main.py splunk --url https://splunk:8089 --username admin --password PASS
+  python main.py secops --sa-file /path/to/sa.json --region us
+  python main.py secops --token BEARER_TOKEN --region southamerica-east1
   python main.py qradar --report-only --db-file qradar_metrics.db
-  python main.py splunk --create-config
+  python main.py secops --create-config
         """
     )
 
@@ -289,6 +400,22 @@ Exemplos:
     splunk_parser.add_argument("--create-config", action="store_true", help="Criar arquivo de config de exemplo")
     splunk_parser.add_argument("--verbose", action="store_true", help="Logging em modo DEBUG")
 
+    # --- Google SecOps subcommand ---
+    secops_parser = subparsers.add_parser("secops", help="Coletar do Google SecOps (Chronicle)")
+    secops_parser.add_argument("--sa-file", help="Caminho para o arquivo Service Account JSON")
+    secops_parser.add_argument("--token", help="Bearer Token (alternativa ao Service Account)")
+    secops_parser.add_argument("--region", default=None,
+                               help="Região do Google SecOps (default: us). Ex: us, europe, southamerica-east1")
+    secops_parser.add_argument("--config", help="Arquivo de configuração JSON")
+    secops_parser.add_argument("--days", type=float, help=f"Dias de coleta (default: {DEFAULT_COLLECTION_DAYS})")
+    secops_parser.add_argument("--interval", type=float,
+                               help=f"Intervalo em horas (default: {DEFAULT_INTERVAL_HOURS})")
+    secops_parser.add_argument("--db-file", help="Arquivo SQLite (default: secops_metrics.db)")
+    secops_parser.add_argument("--report-dir", help=f"Diretório de relatórios (default: {DEFAULT_REPORT_DIR})")
+    secops_parser.add_argument("--report-only", action="store_true", help="Apenas gerar relatório do DB existente")
+    secops_parser.add_argument("--create-config", action="store_true", help="Criar arquivo de config de exemplo")
+    secops_parser.add_argument("--verbose", action="store_true", help="Logging em modo DEBUG")
+
     return parser
 
 
@@ -304,6 +431,8 @@ def main():
         run_qradar(args)
     elif args.siem == "splunk":
         run_splunk(args)
+    elif args.siem == "secops":
+        run_secops(args)
     else:
         parser.print_help()
         sys.exit(1)

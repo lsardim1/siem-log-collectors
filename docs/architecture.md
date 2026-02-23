@@ -11,15 +11,16 @@ O projeto utiliza uma arquitetura modular onde código compartilhado vive em `co
 ```
                     main.py
                       │
-         ┌────────────┼────────────┐
-         │                         │
-    qradar subcommand         splunk subcommand
-         │                         │
-         ▼                         ▼
-  QRadarClient              SplunkClient
-  (AQL + Ariel)             (SPL + Search Jobs v2)
-         │                         │
-         └────────┬────────────────┘
+         ┌────────────┼────────────┬────────────┐
+         │                         │                 │
+    qradar subcommand         splunk subcommand  secops subcommand
+         │                         │                 │
+         ▼                         ▼                 ▼
+  QRadarClient              SplunkClient     GoogleSecOpsClient
+  (AQL + Ariel)             (SPL + Search    (UDM Search +
+         │                  Jobs v2)          Backstory API)
+         │                         │                 │
+         └────────┬────────────────┘─────────────┘
                   │
          ┌────────┼────────┐
          │        │        │
@@ -62,13 +63,13 @@ Formato unificado para inventário:
 
 Gera relatórios parametrizados por SIEM:
 
-| Parâmetro | QRadar | Splunk |
-|-----------|--------|--------|
-| `siem_name` | `"qradar"` | `"splunk"` |
-| `source_label` | `"Log Source"` | `"Source [Index]"` |
-| `type_label` | `"Tipo Log Source"` | `"Sourcetype"` |
-| `include_unparsed` | ✅ | ❌ |
-| `include_aggregated` | ✅ | ❌ |
+| Parâmetro | QRadar | Splunk | Google SecOps |
+|-----------|--------|--------|---------------|
+| `siem_name` | `"qradar"` | `"splunk"` | `"secops"` |
+| `source_label` | `"Log Source"` | `"Source [Index]"` | `"Log Type"` |
+| `type_label` | `"Tipo Log Source"` | `"Sourcetype"` | `"Log Type"` |
+| `include_unparsed` | ✅ | ❌ | ❌ |
+| `include_aggregated` | ✅ | ❌ | ❌ |
 
 Formatos:
 - **CSV** — UTF-8 BOM, separador `;`, Excel-ready
@@ -110,12 +111,25 @@ class SIEMClient(ABC):
 - **Inventário:** `/services/data/indexes` + SPL metadata
 - **Extras:** license_usage.log, forwarder list, data inputs via `| rest`
 
-### 8. `main.py` — Entry Point Unificado
+### 8. `collectors/google_secops/client.py` — GoogleSecOpsClient
+
+- **Auth:** Service Account JSON (`google-auth`) ou Bearer Token
+- **Scope:** `https://www.googleapis.com/auth/chronicle-backstory`
+- **API:** Backstory API v1 — `GET /v1/events:udmSearch`
+- **Endpoints:** 19 regiões (US default: `backstory.googleapis.com`)
+- **Agregação:** Client-side por `metadata.logType` + `metadata.productName`
+- **Limite:** 10.000 eventos/query, 360 queries/hora, 10 min timeout
+- **Inventário:** Log types descobertos via UDM Search (últimas 24h)
+- **Nota:** Payload bytes não disponíveis via UDM Search (preenchidos com 0.0)
+
+### 9. `main.py` — Entry Point Unificado
 
 ```bash
 python main.py qradar --url ... --token ...
 python main.py splunk --url ... --token ...
 python main.py splunk --url ... --username ... --password ...
+python main.py secops --sa-file ... --region us
+python main.py secops --token ... --region southamerica-east1
 python main.py qradar --report-only --db-file metrics.db
 python main.py splunk --create-config
 ```
@@ -147,8 +161,9 @@ SIEM API ──► SIEMClient ──► run_collection_cycle ──► MetricsDB
 | HTTP 5xx | Retry com backoff |
 | Rede indisponível | Retry com backoff |
 | Ctrl+C / SIGINT | Parada graciosa — salva estado e gera relatório |
-| Query AQL/SPL falha | Retorna -1; janela não avança; catch-up no próximo ciclo |
+| Query AQL/SPL/UDM falha | Retorna -1; janela não avança; catch-up no próximo ciclo |
 | SIEM reiniciando | Retry com backoff — recupera nas janelas seguintes |
+| Rate limit (429) | Retry respeitando `Retry-After`; Google SecOps: 360 QPH |
 | Disco cheio | Erro fatal — SQLite não consegue escrever |
 
 ---

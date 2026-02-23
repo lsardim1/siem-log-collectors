@@ -22,8 +22,8 @@ Esses coletores respondem essa pergunta automaticamente, gerando um relatório d
 |------|--------|-------|-----|--------|
 | **IBM QRadar** | ✅ Pronto | [`collectors/qradar/`](collectors/qradar/) | REST API v26.0 (AQL + Ariel) | 15 testes |
 | **Splunk Enterprise** | ✅ Pronto | [`collectors/splunk/`](collectors/splunk/) | REST API v2 (SPL + Search Jobs) | 21 testes |
+| **Google SecOps** | ✅ Pronto | [`collectors/google_secops/`](collectors/google_secops/) | Backstory API v1 (UDM Search) | 43 testes |
 | **Core Compartilhado** | ✅ Pronto | [`core/`](core/) | — | 27 testes |
-| **Google SecOps (Chronicle)** | 🔜 Em desenvolvimento | [`collectors/google-secops/`](collectors/google-secops/) | Chronicle API | — |
 | **Elastic Security** | 📋 Planejado | — | Elasticsearch API | — |
 
 ---
@@ -37,6 +37,7 @@ O projeto utiliza uma **arquitetura modular** com código compartilhado em `core
 │        main.py (Unified Entry Point)        │
 │  python main.py qradar --url ... --token .. │
 │  python main.py splunk --url ... --token .. │
+│  python main.py secops --sa-file ... --rg.. │
 ├─────────────────────────────────────────────┤
 │        core/ (Shared Modules)               │
 │  ├── utils.py      ErrorCounter, retry,     │
@@ -49,7 +50,8 @@ O projeto utiliza uma **arquitetura modular** com código compartilhado em `core
 │        collectors/ (SIEM-specific)          │
 │  ├── base.py       SIEMClient ABC           │
 │  ├── qradar/       QRadarClient (AQL)       │
-│  └── splunk/       SplunkClient (SPL)       │
+│  ├── splunk/       SplunkClient (SPL)       │
+│  └── google_secops/ GoogleSecOpsClient(UDM) │
 └─────────────────────────────────────────────┘
 ```
 
@@ -101,6 +103,12 @@ python main.py splunk --url https://splunk:8089 --token SEU_TOKEN
 # Splunk (Basic Auth)
 python main.py splunk --url https://splunk:8089 --username admin --password SENHA
 
+# Google SecOps (Service Account)
+python main.py secops --sa-file /path/to/sa.json --region us
+
+# Google SecOps (Bearer Token)
+python main.py secops --token $(gcloud auth print-access-token) --region southamerica-east1
+
 # Gerar apenas relatório de DB existente
 python main.py qradar --report-only --db-file qradar_metrics.db
 
@@ -121,13 +129,13 @@ reports/
 
 ## 🧪 Rodando os Testes
 
-Todos os 63 testes rodam offline com `unittest.mock`:
+Todos os 106 testes rodam offline com `unittest.mock`:
 
 ```bash
 python -m unittest discover tests/ -v
 ```
 
-> **Nota:** Não é necessário ter QRadar ou Splunk instalados para rodar os testes.
+> **Nota:** Não é necessário ter QRadar, Splunk ou Google SecOps para rodar os testes.
 
 ---
 
@@ -157,14 +165,17 @@ siem-log-collectors/
 │   │   ├── __init__.py
 │   │   ├── client.py            ← SplunkClient (SPL, Search Jobs v2)
 │   │   └── README.md
-│   └── google-secops/           ← Em desenvolvimento
+│   └── google_secops/
+│       ├── __init__.py
+│       ├── client.py            ← GoogleSecOpsClient (UDM Search)
 │       └── README.md
 ├── tests/                       ← Suíte de testes unificada
 │   ├── __init__.py
 │   ├── conftest.py
 │   ├── test_core.py             ← 27 testes (shared modules)
 │   ├── test_qradar.py           ← 15 testes (QRadar client)
-│   └── test_splunk.py           ← 21 testes (Splunk client)
+│   ├── test_splunk.py           ← 21 testes (Splunk client)
+│   └── test_google_secops.py    ← 43 testes (Google SecOps client)
 └── docs/
     └── architecture.md          ← Detalhes da arquitetura modular
 ```
