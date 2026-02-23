@@ -20,8 +20,8 @@ Esses coletores respondem essa pergunta automaticamente, gerando um relatório d
 
 | SIEM | Status | Pasta | API | Testes |
 |------|--------|-------|-----|--------|
-| **IBM QRadar** | ✅ Pronto | [`collectors/qradar/`](collectors/qradar/) | REST API v26.0 (AQL + Ariel) | 20 testes |
-| **Splunk Enterprise** | ✅ Pronto | [`collectors/splunk/`](collectors/splunk/) | REST API v2 (SPL + Search Jobs) | 24 testes |
+| **IBM QRadar** | ✅ Pronto | [`collectors/qradar/`](collectors/qradar/) | REST API v26.0 (AQL + Ariel) | 19 testes |
+| **Splunk Enterprise** | ✅ Pronto | [`collectors/splunk/`](collectors/splunk/) | REST API v2 (SPL + Search Jobs) | 25 testes |
 | **Google SecOps** | ✅ Pronto | [`collectors/google_secops/`](collectors/google_secops/) | Backstory API v1 (UDM Search) | 45 testes |
 | **Core Compartilhado** | ✅ Pronto | [`core/`](core/) | — | 42 testes |
 | **Elastic Security** | 📋 Planejado | — | Elasticsearch API | — |
@@ -179,8 +179,8 @@ siem-log-collectors/
 │   ├── __init__.py
 │   ├── conftest.py
 │   ├── test_core.py             ← 42 testes (shared modules)
-│   ├── test_qradar.py           ← 20 testes (QRadar client)
-│   ├── test_splunk.py           ← 24 testes (Splunk client)
+│   ├── test_qradar.py           ← 19 testes (QRadar client)
+│   ├── test_splunk.py           ← 25 testes (Splunk client)
 │   └── test_google_secops.py    ← 45 testes (Google SecOps client)
 └── docs/
     └── architecture.md          ← Detalhes da arquitetura modular

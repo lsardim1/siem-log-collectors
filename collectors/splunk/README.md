@@ -89,7 +89,7 @@ siem-log-collectors/
 │       └── README.md                # Este documento
 ├── tests/
 │   ├── test_core.py                 # 42 testes (módulos compartilhados)
-│   └── test_splunk.py               # 24 testes (específicos Splunk)
+│   └── test_splunk.py               # 25 testes (específicos Splunk)
 ├── requirements.txt                 # Dependências Python
 └── README.md                        # README principal
 ```
@@ -440,7 +440,7 @@ Os testes são a **rede de segurança** do projeto. Como o script opera contra a
 | **`requests`** | Já instalado via `requirements.txt` |
 | **Acesso ao Splunk** | **Não é necessário** — todos os testes usam mocks |
 
-> **Nota:** Os testes estão divididos em `tests/test_core.py` (42 testes dos módulos compartilhados) e `tests/test_splunk.py` (24 testes específicos do Splunk). O total para o projeto é **131 testes** (incluindo testes do QRadar e Google SecOps).
+> **Nota:** Os testes estão divididos em `tests/test_core.py` (42 testes dos módulos compartilhados) e `tests/test_splunk.py` (25 testes específicos do Splunk). O total para o projeto é **131 testes** (incluindo testes do QRadar e Google SecOps).
 
 ### Como executar
 
@@ -455,35 +455,35 @@ python -m unittest tests.test_splunk -v
 python -m unittest tests.test_core -v
 ```
 
-### Cobertura dos testes Splunk (`tests/test_splunk.py` — 24 testes)
+### Cobertura dos testes Splunk (`tests/test_splunk.py` — 25 testes)
 
 | Classe de Teste | Testes | O que valida |
 |---|---|---|
-| `TestCollectionDateBoundary` | 3 | `collection_date` via `window_end_ms - 1ms` (meia-noite, +1ms, meio-dia) |
 | `TestSPLQueries` | 4 | stats by source/sourcetype/index, epoch times, normalização de resultados |
-| `TestTokenPrecedence` | 3 | Cadeia CLI > config > ENV |
 | `TestSplunkSearchFlow` | 2 | Fluxo completo POST→poll→results + max_count |
-| `TestCheckResponse` | 2 | Mensagens acionáveis 401/403, 200 silencioso |
-| `TestTestConnection` | 1 | `test_connection()` via `/services/server/info` |
 | `TestSplunkClientAuth` | 3 | Bearer token, Basic Auth, sem credenciais (ValueError) |
-| `TestConstants` | 3 | Valores: `DEFAULT_COLLECTION_DAYS=6`, `DEFAULT_SPLUNK_PORT=8089`, etc. |
+| `TestTokenPrecedence` | 4 | Cadeia CLI > config > ENV + all_empty |
+| `TestCheckResponse` | 3 | Mensagens acionáveis 401/403, 200 silencioso |
+| `TestTestConnection` | 1 | `test_connection()` via `/services/server/info` |
+| `TestSplunkConstants` | 4 | `DEFAULT_SPLUNK_PORT`, `MAX_RESULTS_PER_PAGE`, `SPL_TIMEOUT`, `POLL_INTERVAL` |
 | `TestResultsTruncationWarning` | 2 | Warning emitido ao atingir MAX_RESULTS_PER_PAGE (10.000) |
-| `TestSplunkStableId` | 1 | `logsourceid` deterministico via SHA-256 (`_stable_id()`) |
+| `TestSplunkStableId` | 1 | `logsourceid` determinístico via SHA-256 (`_stable_id()`) |
+| `TestInventoryCallback` | 1 | Callback de inventário pós-coleta |
 
 ### Cobertura dos testes Core (`tests/test_core.py` — 42 testes)
 
 | Área | Testes | O que valida |
 |---|---|---|
-| Zero-fill | 2 | Zero-fill para fontes ausentes, skip para fontes presentes |
+| Zero-fill | 3 | Zero-fill para fontes ausentes, skip para presentes, skip para disabled |
 | Catch-up cap | 2 | Cap limita janela, gap dentro do limite mantido |
 | Retry / Backoff | 4 | Retry em 500, sem retry em 401, Retry-After 429 respeitado, backoff padrão sem Retry-After |
-| Collection cycle | 4 | Integração com DB real, falha retorna -1, sucesso sem dados retorna 0 |
-| DB / Relatórios | 6 | GROUP BY logsource_id, get_daily_summary, get_overall_daily_average |
+| Collection cycle | 7 | Integração com DB real, falha retorna -1, status tracking (failed/success), callback |
+| DB / Relatórios | 6 | GROUP BY logsource_id, update_collection_run_status, get_daily_summary |
 | Constantes | 5 | Sanidade: `DEFAULT_COLLECTION_DAYS=6`, `MAX_CATCHUP_WINDOWS=3`, etc. |
-| Utilitários | 6 | math.ceil, validação JSON, janelas contíguas |
-| `_stable_id` | 4 | Determinismo, valor fixo SHA-256, range 0..999M, inputs diferentes |
+| `CollectionDateBoundary` | 3 | `collection_date` via `window_end_ms - 1ms` |
+| `ErrorCounter` | 3 | Contagem de erros por categoria |
+| `_stable_id` | 4 | Determinismo SHA-256, valor fixo, range, inputs diferentes |
 | NOTAS por SIEM | 5 | Texto correto para QRadar/Splunk/SecOps/generic, nota enabled=1 |
-| Status tracking | 2+1 | update_collection_run_status(), ErrorCounter, renamed source grouping |
 
 ---
 

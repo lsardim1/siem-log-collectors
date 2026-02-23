@@ -84,7 +84,7 @@ siem-log-collectors/
 │       └── README.md                # Este documento
 ├── tests/
 │   └── test_core.py                 # 42 testes (módulos compartilhados)
-│   └── test_qradar.py               # 20 testes (específicos QRadar)
+│   └── test_qradar.py               # 19 testes (específicos QRadar)
 ├── requirements.txt                 # Dependências Python
 └── README.md                        # README principal
 ```
@@ -468,7 +468,7 @@ Os testes são a **rede de segurança** do projeto. Como o script opera contra u
 | **`requests`** | Já instalado via `requirements.txt` |
 | **Acesso ao QRadar** | **Não é necessário** — todos os testes usam mocks |
 
-> **Nota:** Os testes estão divididos em `tests/test_core.py` (42 testes dos módulos compartilhados) e `tests/test_qradar.py` (20 testes específicos do QRadar). O total para o projeto é **131 testes** (incluindo testes do Splunk e Google SecOps).
+> **Nota:** Os testes estão divididos em `tests/test_core.py` (42 testes dos módulos compartilhados) e `tests/test_qradar.py` (19 testes específicos do QRadar). O total para o projeto é **131 testes** (incluindo testes do Splunk e Google SecOps).
 
 ### Como executar
 
@@ -483,18 +483,17 @@ python -m unittest tests.test_qradar -v
 python -m unittest tests.test_core -v
 ```
 
-### Cobertura dos testes QRadar (`tests/test_qradar.py` — 20 testes)
+### Cobertura dos testes QRadar (`tests/test_qradar.py` — 19 testes)
 
 | Classe de Teste | Testes | O que valida |
 |---|---|---|
-| `TestCollectionDateBoundary` | 3 | `collection_date` via `window_end_ms - 1ms` (meia-noite, +1ms, meio-dia) |
 | `TestAQLQueries` | 4 | `LOGSOURCETYPENAME(devicetype)`, half-open interval, GROUP BY correto |
-| `TestTokenPrecedence` | 3 | Cadeia CLI > config > ENV |
 | `TestArielAsyncFlow` | 2 | Fluxo Ariel completo (POST→poll→results) + Range header |
-| `TestCheckResponse` | 2 | Mensagens acionáveis 401/403, 200 silencioso |
-| `TestQRadarConstants` | 3 | `AQL_TIMEOUT_SECONDS`, `AQL_POLL_INTERVAL`, `ARIEL_MAX_RESULTS` |
 | `TestArielResultsPagination` | 3 | Paginação automática de resultados AQL (single page, multi page, Range headers) |
+| `TestCheckResponse` | 3 | Mensagens acionáveis 401/403, 200 silencioso |
 | `TestPreferWaitHeader` | 1 | Header `Prefer: wait=10` no polling de status |
+| `TestQRadarAuth` | 2 | SEC header, API version header |
+| `TestQRadarConstants` | 3 | `AQL_TIMEOUT_SECONDS`, `AQL_POLL_INTERVAL`, `ARIEL_MAX_RESULTS` |
 | `TestTestConnection` | 1 | `test_connection()` via `/system/about` |
 
 ### Cobertura dos testes Core (`tests/test_core.py` — 42 testes)
@@ -504,10 +503,13 @@ python -m unittest tests.test_core -v
 | Zero-fill | 3 | Zero-fill para fontes ausentes, skip para presentes, skip para disabled |
 | Catch-up cap | 2 | Cap limita janela, gap dentro do limite mantido |
 | Retry / Backoff | 4 | Retry em 500, sem retry em 401, Retry-After 429 respeitado, backoff padrão sem Retry-After |
-| Collection cycle | 6 | Integração com DB real, falha retorna -1, status tracking (failed/success) |
-| DB / Relatórios | 7 | GROUP BY logsource_id, update_collection_run_status, get_daily_summary |
+| Collection cycle | 7 | Integração com DB real, falha retorna -1, status tracking (failed/success), callback |
+| DB / Relatórios | 6 | GROUP BY logsource_id, update_collection_run_status, get_daily_summary |
 | Constantes | 5 | Sanidade: `DEFAULT_COLLECTION_DAYS=6`, `MAX_CATCHUP_WINDOWS=3`, etc. |
-| Utilitários | 6 | math.ceil, validação JSON, janelas contíguas |
+| `CollectionDateBoundary` | 3 | `collection_date` via `window_end_ms - 1ms` |
+| `ErrorCounter` | 3 | Contagem de erros por categoria |
+| `_stable_id` | 4 | Determinismo SHA-256, valor fixo, range, inputs diferentes |
+| NOTAS por SIEM | 5 | Texto correto para QRadar/Splunk/SecOps/generic, nota enabled=1 |
 
 ---
 
@@ -558,7 +560,7 @@ Refatoração completa para arquitetura modular:
 | ABC `SIEMClient` | Interface abstrata para todos os collectors SIEM |
 | Módulos `core/` compartilhados | `utils.py`, `db.py`, `report.py`, `collection.py` |
 | Ponto de entrada unificado | `python main.py qradar` / `python main.py splunk` |
-| Suite de testes dividida | `test_core.py` (42) + `test_qradar.py` (20) + `test_splunk.py` (24) + `test_google_secops.py` (45) = 131 testes |
+| Suite de testes dividida | `test_core.py` (42) + `test_qradar.py` (19) + `test_splunk.py` (25) + `test_google_secops.py` (45) = 131 testes |
 
 ### v2.0 (2026-02-23)
 
