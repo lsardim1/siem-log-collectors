@@ -74,7 +74,7 @@ class ReportGenerator:
             writer = csv.writer(f, delimiter=";")
 
             # Header
-            headers = ["Data", self.source_label, self.type_label, "Total Eventos"]
+            headers = ["Data", "Source ID", self.source_label, self.type_label, "Total Eventos"]
             if self.include_aggregated:
                 headers.append("Eventos Agregados (COUNT(*))")
             if self.include_unparsed:
@@ -90,6 +90,7 @@ class ReportGenerator:
                 total_bytes = row.get("total_bytes", 0) or 0
                 values = [
                     row["collection_date"],
+                    row.get("logsource_id", ""),
                     row["logsource_name"],
                     row["logsource_type"],
                     int(row.get("total_events", 0) or 0),
@@ -123,7 +124,7 @@ class ReportGenerator:
         with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f, delimiter=";")
 
-            headers = [self.source_label, self.type_label, "Dias Coletados",
+            headers = ["Source ID", self.source_label, self.type_label, "Dias Coletados",
                        "Média Diária de Eventos (projetado 24h)"]
             if self.include_aggregated:
                 headers.append("Média Diária Eventos Agregados (projetado 24h)")
@@ -139,6 +140,7 @@ class ReportGenerator:
 
             for row in summary:
                 values = [
+                    row.get("logsource_id", ""),
                     row["logsource_name"],
                     row["logsource_type"],
                     row["days_collected"],

@@ -10,6 +10,7 @@ usados por todos os coletores SIEM.
 import datetime
 import json
 import logging
+import math
 import os
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -135,7 +136,7 @@ def main_collection_loop(
         collect_inventory_func: Callable(client, db) -> int para inventário inicial.
     """
     total_hours = collection_days * 24
-    total_collections = int(total_hours / interval_hours)
+    total_collections = math.ceil(total_hours / interval_hours)
     interval_seconds = interval_hours * 3600
 
     logger.info(f"  Total estimado de coletas: {total_collections}")

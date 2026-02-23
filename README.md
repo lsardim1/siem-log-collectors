@@ -65,6 +65,16 @@ O projeto utiliza uma **arquitetura modular** com código compartilhado em `core
 | **Relatório CSV** | Pronto para Excel com BOM UTF-8 e separador `;` |
 | **Métricas SQLite** | Banco local sobrevive a quedas e permite re-geração de relatórios |
 | **collection_days** | Padrão 6 dias (evita "dia parcial" nas médias) |
+| **GROUP BY id** | Agrupamento por `logsource_id` (evita mistura se fontes tiverem nomes iguais ou forem renomeadas) |
+
+### ⚠️ Trade-off: Catch-up cap
+
+Após falhas consecutivas de conexão, o coletor tenta recuperar ("catch-up") a janela de tempo perdida. Porém, para evitar queries AQL/SPL gigantes que sobrecarregariam o SIEM, existe um **cap de segurança** (`MAX_CATCHUP_WINDOWS = 3`):
+
+- Se o gap acumulado for **≤ 3× o intervalo** (ex: ≤ 3h com intervalo de 1h), o catch-up coleta toda a janela perdida normalmente.
+- Se o gap **exceder 3× o intervalo**, a janela é recortada e **os dados do período mais antigo são descartados**. O coletor registra o range perdido no log e segue em frente.
+
+**Isso é intencional:** prioriza-se "andar para frente" com dados recentes em vez de tentar um backfill total que poderia causar timeout ou erro de memória no SIEM. Se precisar de backfill completo, ajuste `MAX_CATCHUP_WINDOWS` em `core/utils.py` ou execute o coletor com janela retroativa manual.
 
 ---
 

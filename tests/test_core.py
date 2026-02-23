@@ -430,6 +430,69 @@ class TestMetricsDB(unittest.TestCase):
         cursor.execute("SELECT COUNT(*) FROM log_sources_inventory")
         self.assertEqual(cursor.fetchone()[0], 2)
 
+    def test_group_by_logsource_id_not_name(self):
+        """Fontes com mesmo nome mas IDs diferentes devem ficar separadas no resumo."""
+        # Duas fontes com MESMO nome mas IDs distintos
+        self.db.save_log_sources_inventory([
+            {"logsource_id": 100, "name": "Firewall", "type_name": "PaloAlto"},
+            {"logsource_id": 200, "name": "Firewall", "type_name": "FortiGate"},
+        ])
+        run_id = self.db.save_collection_run("2026-01-15T10:00:00", "2026-01-15", 1.0)
+        w_start = _epoch_ms(2026, 1, 15, 9, 0, 0)
+        w_end = _epoch_ms(2026, 1, 15, 10, 0, 0)
+        # Salvar métricas com mesmo nome mas IDs diferentes
+        self.db.save_event_metrics(
+            run_id, "2026-01-15T10:00:00", "2026-01-15",
+            w_start, w_end, 3600.0,
+            [
+                {"logsourceid": 100, "log_source_name": "Firewall",
+                 "log_source_type": "PaloAlto", "total_event_count": 500,
+                 "aggregated_event_count": 500, "total_payload_bytes": 1000, "avg_payload_bytes": 2},
+                {"logsourceid": 200, "log_source_name": "Firewall",
+                 "log_source_type": "FortiGate", "total_event_count": 300,
+                 "aggregated_event_count": 300, "total_payload_bytes": 600, "avg_payload_bytes": 2},
+            ],
+            1.0,
+        )
+        daily = self.db.get_daily_summary()
+        # Devem ser 2 linhas separadas, não 1 linha mesclada
+        self.assertEqual(len(daily), 2, "Fontes com mesmo nome mas IDs diferentes devem ficar separadas")
+        events = sorted([d["total_events"] for d in daily])
+        self.assertEqual(events, [300, 500])
+
+    def test_renamed_source_stays_grouped_by_id(self):
+        """Se uma fonte for renomeada entre coletas, dados permanecem agrupados por ID."""
+        self.db.save_log_sources_inventory([
+            {"logsource_id": 42, "name": "OldName", "type_name": "Syslog"},
+        ])
+        w1_start = _epoch_ms(2026, 1, 15, 9, 0, 0)
+        w1_end = _epoch_ms(2026, 1, 15, 10, 0, 0)
+        w2_start = _epoch_ms(2026, 1, 15, 10, 0, 0)
+        w2_end = _epoch_ms(2026, 1, 15, 11, 0, 0)
+
+        run1 = self.db.save_collection_run("2026-01-15T10:00:00", "2026-01-15", 1.0)
+        self.db.save_event_metrics(
+            run1, "2026-01-15T10:00:00", "2026-01-15",
+            w1_start, w1_end, 3600.0,
+            [{"logsourceid": 42, "log_source_name": "OldName",
+              "log_source_type": "Syslog", "total_event_count": 100,
+              "aggregated_event_count": 100, "total_payload_bytes": 200, "avg_payload_bytes": 2}],
+            1.0,
+        )
+        run2 = self.db.save_collection_run("2026-01-15T11:00:00", "2026-01-15", 1.0)
+        self.db.save_event_metrics(
+            run2, "2026-01-15T11:00:00", "2026-01-15",
+            w2_start, w2_end, 3600.0,
+            [{"logsourceid": 42, "log_source_name": "NewName",
+              "log_source_type": "Syslog", "total_event_count": 150,
+              "aggregated_event_count": 150, "total_payload_bytes": 300, "avg_payload_bytes": 2}],
+            1.0,
+        )
+        daily = self.db.get_daily_summary()
+        # Deve ser 1 única linha (mesmo ID), não 2 (nomes diferentes)
+        self.assertEqual(len(daily), 1, "Fonte renomeada deve permanecer agrupada por ID")
+        self.assertEqual(daily[0]["total_events"], 250)
+
 
 if __name__ == "__main__":
     unittest.main()

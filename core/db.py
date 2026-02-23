@@ -253,13 +253,18 @@ class MetricsDB:
         return zero_count
 
     def get_daily_summary(self) -> List[Dict]:
-        """Retorna resumo diário por log source."""
+        """Retorna resumo diário por log source.
+
+        Agrupa por logsource_id (não por nome) para evitar mistura quando
+        fontes compartilham o mesmo nome ou são renomeadas durante a coleta.
+        """
         cursor = self.conn.cursor()
         cursor.execute("""
             SELECT 
                 collection_date,
-                logsource_name,
-                logsource_type,
+                logsource_id,
+                MAX(logsource_name) as logsource_name,
+                MAX(logsource_type) as logsource_type,
                 SUM(total_event_count) as total_events,
                 SUM(aggregated_event_count) as aggregated_events,
                 SUM(unparsed_total_events) as unparsed_total_events,
@@ -272,7 +277,7 @@ class MetricsDB:
                 COUNT(DISTINCT collection_time) as collection_count,
                 SUM(window_seconds) as covered_seconds
             FROM event_metrics
-            GROUP BY collection_date, logsource_name, logsource_type
+            GROUP BY collection_date, logsource_id
             ORDER BY collection_date, total_events DESC
         """)
         columns = [desc[0] for desc in cursor.description]
@@ -282,12 +287,14 @@ class MetricsDB:
         """Retorna média diária geral por log source (across all days).
 
         Projeta para 24h baseado no tempo efetivamente coberto.
+        Agrupa por logsource_id (não por nome) para evitar mistura.
         """
         cursor = self.conn.cursor()
         cursor.execute("""
             SELECT 
-                logsource_name,
-                logsource_type,
+                logsource_id,
+                MAX(logsource_name) as logsource_name,
+                MAX(logsource_type) as logsource_type,
                 COUNT(DISTINCT collection_date) as days_collected,
 
                 ROUND(AVG(projected_daily_events), 2) as avg_daily_events,
@@ -303,8 +310,9 @@ class MetricsDB:
             FROM (
                 SELECT 
                     collection_date,
-                    logsource_name,
-                    logsource_type,
+                    logsource_id,
+                    MAX(logsource_name) as logsource_name,
+                    MAX(logsource_type) as logsource_type,
                     SUM(total_event_count) as daily_events,
                     SUM(aggregated_event_count) as daily_aggregated_events,
                     SUM(unparsed_total_events) as daily_unparsed_events,
@@ -319,9 +327,9 @@ class MetricsDB:
                     CASE WHEN SUM(window_seconds) > 0 THEN (SUM(unparsed_total_events) * 86400.0 / SUM(window_seconds)) ELSE SUM(unparsed_total_events) END as projected_daily_unparsed_events,
                     CASE WHEN SUM(window_seconds) > 0 THEN (SUM(total_payload_bytes) * 86400.0 / SUM(window_seconds)) ELSE SUM(total_payload_bytes) END as projected_daily_bytes
                 FROM event_metrics
-                GROUP BY collection_date, logsource_name, logsource_type
+                GROUP BY collection_date, logsource_id
             ) daily
-            GROUP BY logsource_name, logsource_type
+            GROUP BY logsource_id
             ORDER BY avg_daily_bytes_total DESC
         """)
         columns = [desc[0] for desc in cursor.description]
