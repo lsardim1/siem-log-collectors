@@ -394,6 +394,52 @@ class TestRunCollectionCycle(unittest.TestCase):
 
         callback.assert_called_once()
 
+    def test_query_failure_returns_negative_one(self):
+        """Se get_event_metrics_window lança exceção, retorna -1 (não 0).
+
+        Isso sinaliza ao loop principal que a janela NÃO deve ser avançada,
+        permitindo catch-up no próximo ciclo.
+        """
+        self.client.get_event_metrics_window.side_effect = RuntimeError("AQL timeout")
+
+        error_counter = ErrorCounter()
+        window_start = _epoch_ms(2026, 1, 15, 11, 0, 0)
+        window_end = _epoch_ms(2026, 1, 15, 12, 0, 0)
+
+        ds_count = run_collection_cycle(
+            client=self.client,
+            db=self.db,
+            interval_hours=1.0,
+            window_start_ms=window_start,
+            window_end_ms=window_end,
+            error_counter=error_counter,
+            siem_name="test",
+        )
+
+        self.assertEqual(ds_count, -1, "Falha na query deve retornar -1, não 0")
+        self.assertIn("test_query_failed", error_counter.as_dict())
+
+    def test_empty_results_returns_zero(self):
+        """Se query retorna None (sem dados), retorna 0 (não -1).
+
+        Janela vazia é sucesso — o loop deve avançar last_window_end_ms.
+        """
+        self.client.get_event_metrics_window.return_value = None
+
+        window_start = _epoch_ms(2026, 1, 15, 11, 0, 0)
+        window_end = _epoch_ms(2026, 1, 15, 12, 0, 0)
+
+        ds_count = run_collection_cycle(
+            client=self.client,
+            db=self.db,
+            interval_hours=1.0,
+            window_start_ms=window_start,
+            window_end_ms=window_end,
+            siem_name="test",
+        )
+
+        self.assertEqual(ds_count, 0, "Resultado vazio deve retornar 0 (sucesso)")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 8. MetricsDB schema

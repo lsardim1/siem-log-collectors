@@ -76,7 +76,7 @@ def run_collection_cycle(
         if error_counter:
             error_counter.inc(f"{siem_name}_query_failed")
         logger.error(f"Falha ao coletar métricas: {exc}")
-        return 0
+        return -1  # Sinaliza falha; caller NÃO deve avançar last_window_end_ms
 
     seen_ids: set = set()
     ds_count = 0
@@ -191,7 +191,14 @@ def main_collection_loop(
                 post_collect_callback=post_collect_callback,
             )
             collection_count += 1
-            last_window_end_ms = window_end_ms
+
+            # Só avança a janela se a coleta teve sucesso (ds_count >= 0).
+            # ds_count == -1 indica falha na query; catch-up no próximo ciclo.
+            if ds_count >= 0:
+                last_window_end_ms = window_end_ms
+            else:
+                logger.info("Query falhou — janela será re-tentada no próximo ciclo (catch-up).")
+                # NÃO avança last_window_end_ms
 
             remaining_seconds = max(0.0, end_monotonic - time.monotonic())
             remaining_hours = remaining_seconds / 3600.0
