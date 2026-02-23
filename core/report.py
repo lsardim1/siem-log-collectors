@@ -279,12 +279,23 @@ class ReportGenerator:
             f.write("\n" + "─" * 100 + "\n")
             f.write("  NOTAS\n")
             f.write("─" * 100 + "\n")
-            f.write("  • Volumes de bytes referem-se ao payload armazenado no SIEM (pode diferir do\n")
-            f.write("    log bruto on-wire devido a coalescing, truncamento e configurações de storage).\n")
+            if self.siem_name == "qradar":
+                f.write("  • Volumes de bytes referem-se ao payload armazenado no Ariel (pode diferir do\n")
+                f.write("    log bruto on-wire devido a coalescing, truncamento e configurações de storage).\n")
+            elif self.siem_name == "splunk":
+                f.write("  • Volumes de bytes são calculados via sum(len(_raw)) — tamanho bruto do evento\n")
+                f.write("    no index (não comprimido). Para bytes licenciados, use get_license_usage().\n")
+            elif self.siem_name == "secops":
+                f.write("  • Volumes de bytes NÃO estão disponíveis via UDM Search do Google SecOps.\n")
+                f.write("    Todas as colunas de bytes estão zeradas. Use o console do SecOps para volumes.\n")
+            else:
+                f.write("  • Volumes de bytes referem-se ao payload armazenado no SIEM (pode diferir do\n")
+                f.write("    log bruto on-wire devido a coalescing, truncamento e configurações de storage).\n")
             if self.include_aggregated:
                 f.write("  • Coalescing Ratio (Total Eventos / COUNT(*)) indica quantos eventos reais\n")
                 f.write("    cada registro armazenado representa. Valores > 1 indicam coalescing ativo.\n")
             f.write("  • Projeções 24h são normalizadas pelo tempo efetivamente coberto (zero-fill).\n")
+            f.write("  • Zero-fill aplica-se apenas a fontes habilitadas (enabled=1) no inventário.\n")
 
             f.write("\n" + "=" * 100 + "\n")
             f.write("  FIM DO RELATÓRIO\n")

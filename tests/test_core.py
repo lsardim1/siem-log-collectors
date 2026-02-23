@@ -33,8 +33,10 @@ from core.utils import (
     RETRY_BASE_DELAY,
     RETRY_MAX_ATTEMPTS,
     _retry_with_backoff,
+    _stable_id,
 )
 from core.collection import run_collection_cycle
+from core.report import ReportGenerator
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -116,6 +118,40 @@ class TestErrorCounter(unittest.TestCase):
         ec.inc("a_err", 3)
         # Sorted by key
         self.assertEqual(ec.summary_line(), "a_err=3, b_err=1")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2b. _stable_id — hash determinístico para logsource_id
+# ─────────────────────────────────────────────────────────────────────────────
+class TestStableId(unittest.TestCase):
+    """Verifica que _stable_id é determinístico e bem distribuído."""
+
+    def test_deterministic_same_input(self):
+        """Mesma string deve retornar sempre o mesmo ID."""
+        key = "firewall|syslog|main"
+        id1 = _stable_id(key)
+        id2 = _stable_id(key)
+        self.assertEqual(id1, id2)
+
+    def test_deterministic_known_value(self):
+        """SHA-256 deve produzir um valor fixo calculável."""
+        # hashlib.sha256("test".encode()).hexdigest()[:8] = '9f86d081'
+        # int('9f86d081', 16) = 2676412545
+        # 2676412545 % (10**9) = 676412545
+        self.assertEqual(_stable_id("test"), 676412545)
+
+    def test_range_within_bounds(self):
+        """IDs devem estar entre 0 e 999_999_999."""
+        for key in ["a", "bb", "ccc", "firewall|PaloAlto|main", "index:_internal"]:
+            result = _stable_id(key)
+            self.assertGreaterEqual(result, 0)
+            self.assertLess(result, 10**9)
+
+    def test_different_inputs_different_ids(self):
+        """Inputs diferentes devem gerar IDs diferentes."""
+        id1 = _stable_id("source_a|type_a|idx_a")
+        id2 = _stable_id("source_b|type_b|idx_b")
+        self.assertNotEqual(id1, id2)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -654,6 +690,82 @@ class TestMetricsDB(unittest.TestCase):
         self.db.update_collection_run_status(run_id, "success")
         cursor.execute("SELECT status FROM collection_runs WHERE run_id = ?", (run_id,))
         self.assertEqual(cursor.fetchone()[0], "success")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. ReportGenerator — NOTAS section per SIEM
+# ─────────────────────────────────────────────────────────────────────────────
+class TestReportNotasPerSiem(unittest.TestCase):
+    """Verifica que a seção NOTAS usa texto correto por SIEM."""
+
+    def setUp(self):
+        self.db_fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        self.db = MetricsDB(self.db_path)
+        self.report_dir = tempfile.mkdtemp()
+
+        # Inserir dados mínimos para gerar relatório
+        self.db.save_log_sources_inventory([{
+            "logsource_id": 1, "name": "test", "type_name": "syslog",
+            "enabled": 1, "description": "", "group_ids": "",
+        }])
+        run_id = self.db.save_collection_run(
+            "2025-01-15T10:00:00", "2025-01-15", 1.0
+        )
+        now_ms = int(datetime.datetime(2025, 1, 15, 10, 0, 0,
+                                        tzinfo=datetime.timezone.utc).timestamp() * 1000)
+        self.db.save_event_metrics(
+            run_id, "2025-01-15T10:00:00", "2025-01-15",
+            now_ms - 3600000, now_ms, 3600.0,
+            [{"logsourceid": 1, "log_source_name": "test",
+              "log_source_type": "syslog", "total_event_count": 10,
+              "aggregated_event_count": 10,
+              "total_payload_bytes": 100, "avg_payload_bytes": 10}],
+            1.0,
+        )
+
+    def tearDown(self):
+        self.db.close()
+        os.close(self.db_fd)
+        os.unlink(self.db_path)
+        import shutil
+        shutil.rmtree(self.report_dir, ignore_errors=True)
+
+    def _get_report_text(self, siem_name: str) -> str:
+        rpt = ReportGenerator(self.db, self.report_dir, siem_name=siem_name)
+        rpt.generate_all_reports()
+        # Encontra o arquivo .txt gerado
+        import glob
+        txt_files = glob.glob(os.path.join(self.report_dir, "*.txt"))
+        self.assertTrue(len(txt_files) > 0, "Relatório TXT deveria ser gerado")
+        with open(txt_files[0], "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_qradar_notas(self):
+        txt = self._get_report_text("qradar")
+        self.assertIn("Ariel", txt)
+        self.assertNotIn("sum(len(_raw))", txt)
+
+    def test_splunk_notas(self):
+        txt = self._get_report_text("splunk")
+        self.assertIn("sum(len(_raw))", txt)
+        self.assertNotIn("Ariel", txt)
+
+    def test_secops_notas(self):
+        txt = self._get_report_text("secops")
+        self.assertIn("UDM Search", txt)
+        self.assertIn("zeradas", txt)
+
+    def test_generic_notas(self):
+        txt = self._get_report_text("generic_siem")
+        self.assertIn("SIEM", txt)
+        self.assertNotIn("Ariel", txt)
+        self.assertNotIn("sum(len(_raw))", txt)
+
+    def test_zero_fill_enabled_note(self):
+        """Todas as variantes devem conter nota sobre enabled=1."""
+        for siem in ["qradar", "splunk", "secops", "xyz"]:
+            txt = self._get_report_text(siem)
+            self.assertIn("enabled=1", txt, f"SIEM '{siem}' deveria mencionar enabled=1")
 
 
 if __name__ == "__main__":

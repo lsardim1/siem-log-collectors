@@ -17,7 +17,7 @@ import requests
 
 from collectors.base import SIEMClient
 from core.db import MetricsDB
-from core.utils import _retry_with_backoff
+from core.utils import _retry_with_backoff, _stable_id
 
 logger = logging.getLogger("siem_collector")
 
@@ -294,6 +294,13 @@ class SplunkClient(SIEMClient):
         if results is None:
             return None
 
+        if len(results) >= MAX_RESULTS_PER_PAGE:
+            logger.warning(
+                f"Resultado SPL atingiu o limite de {MAX_RESULTS_PER_PAGE} linhas. "
+                "Dados podem estar truncados. Considere intervalos menores "
+                "ou verifique se o ambiente possui combinações source/sourcetype/index em excesso."
+            )
+
         normalized: List[Dict] = []
         for r in results:
             try:
@@ -311,7 +318,7 @@ class SplunkClient(SIEMClient):
             logsource_name = f"{source} [{index_name}]"
 
             normalized.append({
-                "logsourceid": hash(f"{source}|{sourcetype}|{index_name}") % (10**9),
+                "logsourceid": _stable_id(f"{source}|{sourcetype}|{index_name}"),
                 "log_source_name": logsource_name,
                 "log_source_type": sourcetype,
                 "aggregated_event_count": total_events,
@@ -355,7 +362,7 @@ def collect_inventory(client: SplunkClient, db: MetricsDB) -> int:
         if indexes:
             inventory = []
             for idx in indexes:
-                ls_id = hash(f"index:{idx['name']}") % (10**9)
+                ls_id = _stable_id(f"index:{idx['name']}")
                 inventory.append({
                     "logsource_id": ls_id,
                     "name": f"index:{idx['name']}",

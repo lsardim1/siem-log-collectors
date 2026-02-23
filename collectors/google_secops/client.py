@@ -21,7 +21,7 @@ import requests
 
 from collectors.base import SIEMClient
 from core.db import MetricsDB
-from core.utils import _retry_with_backoff
+from core.utils import _retry_with_backoff, _stable_id
 
 logger = logging.getLogger("siem_collector")
 
@@ -317,7 +317,7 @@ class GoogleSecOpsClient(SIEMClient):
             )
 
             normalized.append({
-                "logsourceid": hash(f"{log_type}|{product_name}") % (10**9),
+                "logsourceid": _stable_id(f"{log_type}|{product_name}"),
                 "log_source_name": source_name,
                 "log_source_type": log_type,
                 "aggregated_event_count": count,
@@ -368,7 +368,7 @@ def collect_inventory(client: GoogleSecOpsClient, db: MetricsDB) -> int:
         if log_types:
             inventory = []
             for lt in log_types:
-                ls_id = hash(f"logtype:{lt}") % (10**9)
+                ls_id = _stable_id(f"logtype:{lt}")
                 inventory.append({
                     "logsource_id": ls_id,
                     "name": lt,

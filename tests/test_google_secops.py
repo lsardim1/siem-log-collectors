@@ -568,5 +568,69 @@ class TestSecOpsConstants(unittest.TestCase):
         self.assertEqual(len(BACKSTORY_ENDPOINTS), 19)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 10. _stable_id — logsourceid determinístico
+# ─────────────────────────────────────────────────────────────────────────────
+class TestSecOpsStableId(unittest.TestCase):
+    """Verifica que Google SecOps usa _stable_id (determinístico) nos IDs."""
+
+    def _make_client(self):
+        return _make_client()
+
+    @patch.object(GoogleSecOpsClient, "udm_search")
+    def test_event_metrics_uses_stable_id(self, mock_udm):
+        """get_event_metrics_window deve gerar logsourceid determinístico."""
+        # Simula resultado com 1 evento UDM
+        mock_udm.return_value = {
+            "events": [
+                {
+                    "udm": {
+                        "metadata": {
+                            "log_type": "FIREWALL",
+                            "productName": "PaloAlto",
+                            "vendorName": "PAN",
+                        }
+                    }
+                }
+            ]
+        }
+
+        client = self._make_client()
+
+        r1 = client.get_event_metrics_window(1000000, 2000000)
+        r2 = client.get_event_metrics_window(3000000, 4000000)
+
+        # Resultado deve ser determinístico entre chamadas
+        self.assertEqual(r1[0]["logsourceid"], r2[0]["logsourceid"])
+
+        # Valor deve ser calculável via SHA-256
+        import hashlib
+        key = "FIREWALL|PaloAlto"
+        expected = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16) % (10**9)
+        self.assertEqual(r1[0]["logsourceid"], expected)
+
+    @patch.object(GoogleSecOpsClient, "udm_search")
+    def test_bytes_always_zero(self, mock_udm):
+        """Google SecOps: bytes devem ser sempre 0 (não disponível via UDM)."""
+        mock_udm.return_value = {
+            "events": [
+                {
+                    "udm": {
+                        "metadata": {
+                            "log_type": "DNS",
+                            "productName": "InfoBlox",
+                        }
+                    }
+                }
+            ]
+        }
+
+        client = self._make_client()
+        result = client.get_event_metrics_window(1000000, 2000000)
+
+        self.assertEqual(result[0]["total_payload_bytes"], 0.0)
+        self.assertEqual(result[0]["avg_payload_bytes"], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

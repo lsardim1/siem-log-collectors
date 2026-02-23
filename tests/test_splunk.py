@@ -327,5 +327,87 @@ class TestInventoryCallback(unittest.TestCase):
         self.assertEqual(cursor.fetchone()[0], "web_access [main]")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 9. Results truncation warning
+# ─────────────────────────────────────────────────────────────────────────────
+class TestResultsTruncationWarning(unittest.TestCase):
+    """Verifica warning quando SPL atinge MAX_RESULTS_PER_PAGE."""
+
+    def _make_client(self):
+        return SplunkClient(
+            base_url="https://splunk:8089",
+            token="fake-token",
+            verify_ssl=False,
+        )
+
+    @patch.object(SplunkClient, "run_spl_query")
+    def test_warning_when_at_limit(self, mock_query):
+        """Deve emitir warning quando resultado == MAX_RESULTS_PER_PAGE."""
+        fake_rows = [
+            {"source": f"src_{i}", "sourcetype": "syslog", "index": "main",
+             "total_event_count": "10", "total_payload_bytes": "100",
+             "avg_payload_bytes": "10"}
+            for i in range(MAX_RESULTS_PER_PAGE)
+        ]
+        mock_query.return_value = fake_rows
+
+        client = self._make_client()
+        with self.assertLogs("siem_collector", level="WARNING") as cm:
+            client.get_event_metrics_window(1000000, 2000000)
+
+        self.assertTrue(any("limite" in msg for msg in cm.output))
+
+    @patch.object(SplunkClient, "run_spl_query")
+    def test_no_warning_below_limit(self, mock_query):
+        """Não deve emitir warning quando resultado < MAX_RESULTS_PER_PAGE."""
+        fake_rows = [
+            {"source": "src", "sourcetype": "syslog", "index": "main",
+             "total_event_count": "10", "total_payload_bytes": "100",
+             "avg_payload_bytes": "10"}
+        ]
+        mock_query.return_value = fake_rows
+
+        client = self._make_client()
+        result = client.get_event_metrics_window(1000000, 2000000)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 10. _stable_id — logsourceid determinístico
+# ─────────────────────────────────────────────────────────────────────────────
+class TestSplunkStableId(unittest.TestCase):
+    """Verifica que Splunk usa _stable_id (determinístico) nos IDs."""
+
+    @patch.object(SplunkClient, "run_spl_query")
+    def test_event_metrics_uses_stable_id(self, mock_query):
+        """get_event_metrics_window deve gerar logsourceid determinístico."""
+        fake_rows = [
+            {"source": "firewall", "sourcetype": "pan:traffic", "index": "main",
+             "total_event_count": "100", "total_payload_bytes": "5000",
+             "avg_payload_bytes": "50"}
+        ]
+        mock_query.return_value = fake_rows
+
+        client = SplunkClient(
+            base_url="https://splunk:8089",
+            token="fake-token",
+            verify_ssl=False,
+        )
+
+        result1 = client.get_event_metrics_window(1000000, 2000000)
+        result2 = client.get_event_metrics_window(3000000, 4000000)
+
+        # Resultado deve ser determinístico entre chamadas
+        self.assertEqual(result1[0]["logsourceid"], result2[0]["logsourceid"])
+
+        # Valor deve ser calculável via SHA-256
+        import hashlib
+        key = "firewall|pan:traffic|main"
+        expected = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16) % (10**9)
+        self.assertEqual(result1[0]["logsourceid"], expected)
+
+
 if __name__ == "__main__":
     unittest.main()

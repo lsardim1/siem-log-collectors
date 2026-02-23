@@ -88,8 +88,8 @@ siem-log-collectors/
 │       ├── client.py                # SplunkClient (REST API)
 │       └── README.md                # Este documento
 ├── tests/
-│   ├── test_core.py                 # 27 testes (módulos compartilhados)
-│   └── test_splunk.py               # 21 testes (específicos Splunk)
+│   ├── test_core.py                 # 40 testes (módulos compartilhados)
+│   └── test_splunk.py               # 24 testes (específicos Splunk)
 ├── requirements.txt                 # Dependências Python
 └── README.md                        # README principal
 ```
@@ -440,7 +440,7 @@ Os testes são a **rede de segurança** do projeto. Como o script opera contra a
 | **`requests`** | Já instalado via `requirements.txt` |
 | **Acesso ao Splunk** | **Não é necessário** — todos os testes usam mocks |
 
-> **Nota:** Os testes estão divididos em `tests/test_core.py` (27 testes dos módulos compartilhados) e `tests/test_splunk.py` (21 testes específicos do Splunk). O total para o projeto é **63 testes** (incluindo testes do QRadar).
+> **Nota:** Os testes estão divididos em `tests/test_core.py` (40 testes dos módulos compartilhados) e `tests/test_splunk.py` (24 testes específicos do Splunk). O total para o projeto é **127 testes** (incluindo testes do QRadar e Google SecOps).
 
 ### Como executar
 
@@ -455,7 +455,7 @@ python -m unittest tests.test_splunk -v
 python -m unittest tests.test_core -v
 ```
 
-### Cobertura dos testes Splunk (`tests/test_splunk.py` — 21 testes)
+### Cobertura dos testes Splunk (`tests/test_splunk.py` — 24 testes)
 
 | Classe de Teste | Testes | O que valida |
 |---|---|---|
@@ -467,8 +467,10 @@ python -m unittest tests.test_core -v
 | `TestTestConnection` | 1 | `test_connection()` via `/services/server/info` |
 | `TestSplunkClientAuth` | 3 | Bearer token, Basic Auth, sem credenciais (ValueError) |
 | `TestConstants` | 3 | Valores: `DEFAULT_COLLECTION_DAYS=6`, `DEFAULT_SPLUNK_PORT=8089`, etc. |
+| `TestResultsTruncationWarning` | 2 | Warning emitido ao atingir MAX_RESULTS_PER_PAGE (10.000) |
+| `TestSplunkStableId` | 1 | `logsourceid` deterministico via SHA-256 (`_stable_id()`) |
 
-### Cobertura dos testes Core (`tests/test_core.py` — 27 testes)
+### Cobertura dos testes Core (`tests/test_core.py` — 40 testes)
 
 | Área | Testes | O que valida |
 |---|---|---|
@@ -479,6 +481,9 @@ python -m unittest tests.test_core -v
 | DB / Relatórios | 6 | GROUP BY logsource_id, get_daily_summary, get_overall_daily_average |
 | Constantes | 5 | Sanidade: `DEFAULT_COLLECTION_DAYS=6`, `MAX_CATCHUP_WINDOWS=3`, etc. |
 | Utilitários | 6 | math.ceil, validação JSON, janelas contíguas |
+| `_stable_id` | 4 | Determinismo, valor fixo SHA-256, range 0..999M, inputs diferentes |
+| NOTAS por SIEM | 5 | Texto correto para QRadar/Splunk/SecOps/generic, nota enabled=1 |
+| Status tracking | 2+1 | update_collection_run_status(), ErrorCounter, renamed source grouping |
 
 ---
 

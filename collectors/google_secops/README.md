@@ -100,8 +100,8 @@ siem-log-collectors/
 │       ├── client.py                # GoogleSecOpsClient (Backstory API)
 │       └── README.md                # Este documento
 ├── tests/
-│   ├── test_core.py                 # 27 testes (módulos compartilhados)
-│   └── test_google_secops.py        # 43 testes (específicos Google SecOps)
+│   ├── test_core.py                 # 40 testes (módulos compartilhados)
+│   └── test_google_secops.py        # 45 testes (específicos Google SecOps)
 ├── requirements.txt                 # Dependências Python
 └── README.md                        # README principal
 ```
@@ -216,7 +216,7 @@ O módulo segue a seguinte cadeia de prioridade para autenticação:
 
 | Campo | Descrição |
 |---|---|
-| `logsourceid` | ID único calculado via hash(log_type + product_name) |
+| `logsourceid` | ID único determinístico via SHA-256(`log_type + product_name`) — estável entre reinícios |
 | `log_source_name` | Nome: `"{product_name} ({vendor_name})"` |
 | `log_source_type` | Log Type do Google SecOps (ex: `WINDOWS_EVENT`) |
 | `aggregated_event_count` | Total de eventos no intervalo |
@@ -374,7 +374,7 @@ collectors/google_secops/client.py
 
 ## Suite de Testes
 
-43 testes unitários cobrindo todas as funcionalidades:
+45 testes unitários cobrindo todas as funcionalidades:
 
 ```bash
 # Rodar apenas testes do Google SecOps
@@ -397,7 +397,9 @@ python -m unittest tests.test_google_secops -v
 | Inventory | 5 | Coleta, vazio, erro, update callback, lista vazia |
 | Config | 1 | JSON válido |
 | Constants | 6 | Scopes, max events, timeout, endpoints |
-| **Total** | **43** | |
+| _stable_id | 1 | logsourceid determinístico via SHA-256 |
+| Bytes zero | 1 | bytes sempre 0 (não disponível via UDM) |
+| **Total** | **45** | |
 
 Todos os testes são 100% mocked — não fazem chamadas reais à API.
 

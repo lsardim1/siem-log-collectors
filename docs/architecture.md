@@ -88,6 +88,9 @@ Features:
 - **Status tracking** — runs com falha são marcadas `status='failed'` via `update_collection_run_status()`
 - **Enabled-only zero-fill** — apenas fontes com `enabled=1` participam do zero-fill (fontes desabilitadas são excluídas)
 - **post_collect_callback** — Splunk usa para atualizar inventário de SPL results
+- **`_stable_id()` (SHA-256)** — Splunk e SecOps geram `logsource_id` client-side via `_stable_id()` (SHA-256 determinístico) em vez de `hash()` built-in (randomizado desde Python 3.3). Garante IDs estáveis entre reinícios do coletor
+- **Results truncation warning** — QRadar (50.000) e Splunk (10.000) emitem warning quando resultados atingem o limite máximo
+- **NOTAS section per SIEM** — Relatório TXT inclui notas específicas: QRadar (Ariel/coalescing), Splunk (len(_raw)/licenciamento), SecOps (bytes=0/UDM)
 
 ### 5. `collectors/base.py` — SIEMClient ABC
 

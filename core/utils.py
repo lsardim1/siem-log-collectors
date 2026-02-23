@@ -6,6 +6,7 @@ Shared utilities for SIEM log collectors.
 Contains: ErrorCounter, retry logic, signal handling, shared constants.
 """
 
+import hashlib
 import logging
 import signal
 import sys
@@ -34,6 +35,21 @@ MAX_CATCHUP_WINDOWS = 3
 
 # Logger compartilhado
 logger = logging.getLogger("siem_collector")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stable ID generation
+# ─────────────────────────────────────────────────────────────────────────────
+def _stable_id(key: str) -> int:
+    """Gera um inteiro determinístico (0..999_999_999) a partir de uma string.
+
+    Usa SHA-256 em vez de hash() built-in para garantir estabilidade
+    entre reinícios do processo (Python 3.3+ randomiza hash() por padrão).
+    Essencial para Splunk e Google SecOps, cujos logsource_id são gerados
+    client-side a partir de strings (source|sourcetype|index, logType, etc.).
+    """
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % (10**9)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

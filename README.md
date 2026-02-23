@@ -21,9 +21,9 @@ Esses coletores respondem essa pergunta automaticamente, gerando um relatório d
 | SIEM | Status | Pasta | API | Testes |
 |------|--------|-------|-----|--------|
 | **IBM QRadar** | ✅ Pronto | [`collectors/qradar/`](collectors/qradar/) | REST API v26.0 (AQL + Ariel) | 18 testes |
-| **Splunk Enterprise** | ✅ Pronto | [`collectors/splunk/`](collectors/splunk/) | REST API v2 (SPL + Search Jobs) | 21 testes |
-| **Google SecOps** | ✅ Pronto | [`collectors/google_secops/`](collectors/google_secops/) | Backstory API v1 (UDM Search) | 43 testes |
-| **Core Compartilhado** | ✅ Pronto | [`core/`](core/) | — | 31 testes |
+| **Splunk Enterprise** | ✅ Pronto | [`collectors/splunk/`](collectors/splunk/) | REST API v2 (SPL + Search Jobs) | 24 testes |
+| **Google SecOps** | ✅ Pronto | [`collectors/google_secops/`](collectors/google_secops/) | Backstory API v1 (UDM Search) | 45 testes |
+| **Core Compartilhado** | ✅ Pronto | [`core/`](core/) | — | 40 testes |
 | **Elastic Security** | 📋 Planejado | — | Elasticsearch API | — |
 
 ---
@@ -72,6 +72,9 @@ O projeto utiliza uma **arquitetura modular** com código compartilhado em `core
 | **Status tracking** | Corridas com falha são marcadas como `status='failed'` no banco |
 | **Enabled-only zero-fill** | Apenas fontes com `enabled=1` participam do zero-fill |
 | **Ariel results limit** | Máximo 50.000 resultados por query AQL; warning se atingido |
+| **SPL results limit** | Máximo 10.000 resultados por query SPL; warning se atingido |
+| **logsource_id estável** | Splunk e SecOps usam SHA-256 (`_stable_id()`) em vez de `hash()` — IDs determinísticos entre reinícios |
+| **NOTAS por SIEM** | Seção NOTAS no relatório .txt com texto específico por SIEM (bytes, coalescing, limitações) |
 
 ### ⚠️ Trade-off: Catch-up cap
 
@@ -132,7 +135,7 @@ reports/
 
 ## 🧪 Rodando os Testes
 
-Todos os 113 testes rodam offline com `unittest.mock`:
+Todos os 127 testes rodam offline com `unittest.mock`:
 
 ```bash
 python -m unittest discover tests/ -v
@@ -175,10 +178,10 @@ siem-log-collectors/
 ├── tests/                       ← Suíte de testes unificada
 │   ├── __init__.py
 │   ├── conftest.py
-│   ├── test_core.py             ← 31 testes (shared modules)
+│   ├── test_core.py             ← 40 testes (shared modules)
 │   ├── test_qradar.py           ← 18 testes (QRadar client)
-│   ├── test_splunk.py           ← 21 testes (Splunk client)
-│   └── test_google_secops.py    ← 43 testes (Google SecOps client)
+│   ├── test_splunk.py           ← 24 testes (Splunk client)
+│   └── test_google_secops.py    ← 45 testes (Google SecOps client)
 └── docs/
     └── architecture.md          ← Detalhes da arquitetura modular
 ```
