@@ -20,42 +20,36 @@ Esses coletores respondem essa pergunta automaticamente, gerando um relatório d
 
 | SIEM | Status | Pasta | API | Testes |
 |------|--------|-------|-----|--------|
-| **IBM QRadar** | ✅ Pronto | [`collectors/qradar/`](collectors/qradar/) | REST API v26.0 (AQL + Ariel) | 31 testes |
-| **Splunk Enterprise** | ✅ Pronto | [`collectors/splunk/`](collectors/splunk/) | REST API (SPL + Search Jobs) | 34 testes |
+| **IBM QRadar** | ✅ Pronto | [`collectors/qradar/`](collectors/qradar/) | REST API v26.0 (AQL + Ariel) | 15 testes |
+| **Splunk Enterprise** | ✅ Pronto | [`collectors/splunk/`](collectors/splunk/) | REST API v2 (SPL + Search Jobs) | 21 testes |
+| **Core Compartilhado** | ✅ Pronto | [`core/`](core/) | — | 23 testes |
 | **Google SecOps (Chronicle)** | 🔜 Em desenvolvimento | [`collectors/google-secops/`](collectors/google-secops/) | Chronicle API | — |
 | **Elastic Security** | 📋 Planejado | — | Elasticsearch API | — |
 
 ---
 
-## 🏗️ Arquitetura Compartilhada
+## 🏗️ Arquitetura Modular
 
-Todos os coletores seguem a **mesma arquitetura** para facilitar manutenção e contribuição:
+O projeto utiliza uma **arquitetura modular** com código compartilhado em `core/` e módulos SIEM-específicos em `collectors/`:
 
 ```
 ┌─────────────────────────────────────────────┐
-│              CLI (argparse + getpass)        │
-│  ─ Prompts interativos para URL e Token     │
+│        main.py (Unified Entry Point)        │
+│  python main.py qradar --url ... --token .. │
+│  python main.py splunk --url ... --token .. │
 ├─────────────────────────────────────────────┤
-│           SIEM API Client                   │
-│  ─ Autenticação (token / basic)             │
-│  ─ Retry com backoff exponencial            │
-│  ─ SSL configurável (--no-verify-ssl)       │
+│        core/ (Shared Modules)               │
+│  ├── utils.py      ErrorCounter, retry,     │
+│  │                 signal handlers          │
+│  ├── db.py         MetricsDB (SQLite)       │
+│  ├── report.py     ReportGenerator (CSV+TXT)│
+│  └── collection.py run_collection_cycle,    │
+│                    main_collection_loop      │
 ├─────────────────────────────────────────────┤
-│         Collection Engine                   │
-│  ─ Janelas contíguas de 1 hora              │
-│  ─ Catch-up cap (MAX_CATCHUP_WINDOWS=3)     │
-│  ─ Zero-fill para janelas sem dados         │
-│  ─ Parada graciosa (Ctrl+C / SIGINT)        │
-├─────────────────────────────────────────────┤
-│           MetricsDB (SQLite)                │
-│  ─ hourly_metrics + collection_state        │
-│  ─ Idempotente (INSERT OR REPLACE)          │
-│  ─ Sobrevive a reinícios                    │
-├─────────────────────────────────────────────┤
-│         ReportGenerator                     │
-│  ─ CSV (Excel-ready, UTF-8 BOM)             │
-│  ─ TXT (resumo legível no terminal)         │
-│  ─ Métricas: avg/peak GB/day por source     │
+│        collectors/ (SIEM-specific)          │
+│  ├── base.py       SIEMClient ABC           │
+│  ├── qradar/       QRadarClient (AQL)       │
+│  └── splunk/       SplunkClient (SPL)       │
 └─────────────────────────────────────────────┘
 ```
 
@@ -79,53 +73,50 @@ Todos os coletores seguem a **mesma arquitetura** para facilitar manutenção e 
 ### 1. Clone o repositório
 
 ```bash
-git clone https://github.com/SEU-USUARIO/siem-log-collectors.git
+git clone https://github.com/lsardim1/siem-log-collectors.git
 cd siem-log-collectors
+pip install -r requirements.txt
 ```
 
-### 2. Escolha o coletor
+### 2. Execute o coletor
 
 ```bash
 # QRadar
-cd collectors/qradar
-pip install -r requirements.txt
-python qradar_log_collector_v2.py
+python main.py qradar --url https://qradar:443 --token SEU_TOKEN
 
-# Splunk
-cd collectors/splunk
-pip install -r requirements.txt
-python splunk_log_collector_v2.py
+# Splunk (Bearer Token)
+python main.py splunk --url https://splunk:8089 --token SEU_TOKEN
+
+# Splunk (Basic Auth)
+python main.py splunk --url https://splunk:8089 --username admin --password SENHA
+
+# Gerar apenas relatório de DB existente
+python main.py qradar --report-only --db-file qradar_metrics.db
+
+# Criar config de exemplo
+python main.py splunk --create-config
 ```
 
-### 3. Siga os prompts interativos
-
-Cada coletor pergunta URL, token/credenciais e parâmetros via terminal (sem expor senhas no histórico do shell).
-
-### 4. Confira os relatórios
+### 3. Confira os relatórios
 
 ```
 reports/
-├── ingestao_<SIEM>_YYYYMMDD_HHMMSS.csv   ← Excel-ready
-└── ingestao_<SIEM>_YYYYMMDD_HHMMSS.txt   ← Resumo para terminal
+├── <siem>_daily_report_YYYYMMDD_HHMMSS.csv    ← Detalhamento diário (Excel-ready)
+├── <siem>_summary_report_YYYYMMDD_HHMMSS.csv  ← Média diária por source
+└── <siem>_full_report_YYYYMMDD_HHMMSS.txt     ← Resumo completo em texto
 ```
 
 ---
 
 ## 🧪 Rodando os Testes
 
-Cada coletor tem sua suíte de testes unitários (100% mocked, sem precisar de acesso ao SIEM):
+Todos os 59 testes rodam offline com `unittest.mock`:
 
 ```bash
-# QRadar (31 testes)
-cd collectors/qradar
-python -m pytest test_qradar_log_collector.py -v
-
-# Splunk (34 testes)
-cd collectors/splunk
-python -m pytest test_splunk_log_collector.py -v
+python -m unittest discover tests/ -v
 ```
 
-> **Dica:** Todos os testes rodam offline com `unittest.mock` — não é necessário ter QRadar ou Splunk instalados.
+> **Nota:** Não é necessário ter QRadar ou Splunk instalados para rodar os testes.
 
 ---
 
@@ -133,25 +124,38 @@ python -m pytest test_splunk_log_collector.py -v
 
 ```
 siem-log-collectors/
+├── main.py                      ← Entry point unificado
+├── requirements.txt             ← Dependências (requests, urllib3)
 ├── README.md                    ← Você está aqui
 ├── LICENSE                      ← MIT
-├── .gitignore                   ← Python + artefatos de execução
 ├── CONTRIBUTING.md              ← Como contribuir / adicionar novo SIEM
-├── collectors/
-│   ├── qradar/                  ← IBM QRadar collector
-│   │   ├── qradar_log_collector_v2.py
-│   │   ├── test_qradar_log_collector.py
-│   │   ├── requirements.txt
+├── core/                        ← Módulos compartilhados
+│   ├── __init__.py
+│   ├── utils.py                 ← ErrorCounter, retry, signal handlers
+│   ├── db.py                    ← MetricsDB (SQLite)
+│   ├── report.py                ← ReportGenerator (CSV + TXT)
+│   └── collection.py            ← run_collection_cycle, main_loop
+├── collectors/                  ← Módulos SIEM-específicos
+│   ├── __init__.py
+│   ├── base.py                  ← SIEMClient ABC (interface)
+│   ├── qradar/
+│   │   ├── __init__.py
+│   │   ├── client.py            ← QRadarClient (AQL, Ariel)
 │   │   └── README.md
-│   ├── splunk/                  ← Splunk Enterprise collector
-│   │   ├── splunk_log_collector_v2.py
-│   │   ├── test_splunk_log_collector.py
-│   │   ├── requirements.txt
+│   ├── splunk/
+│   │   ├── __init__.py
+│   │   ├── client.py            ← SplunkClient (SPL, Search Jobs v2)
 │   │   └── README.md
-│   └── google-secops/           ← Google SecOps (Chronicle) — Em desenvolvimento
+│   └── google-secops/           ← Em desenvolvimento
 │       └── README.md
+├── tests/                       ← Suíte de testes unificada
+│   ├── __init__.py
+│   ├── conftest.py
+│   ├── test_core.py             ← 23 testes (shared modules)
+│   ├── test_qradar.py           ← 15 testes (QRadar client)
+│   └── test_splunk.py           ← 21 testes (Splunk client)
 └── docs/
-    └── architecture.md          ← Detalhes da arquitetura compartilhada
+    └── architecture.md          ← Detalhes da arquitetura modular
 ```
 
 ---

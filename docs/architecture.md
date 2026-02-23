@@ -1,183 +1,140 @@
 # 🏗️ Arquitetura dos Coletores
 
-Este documento detalha a arquitetura compartilhada entre todos os coletores do projeto **siem-log-collectors**.
+Este documento detalha a arquitetura modular do projeto **siem-log-collectors**.
 
 ---
 
 ## Visão Geral
 
-Cada coletor é um script Python standalone que:
-
-1. **Conecta** ao SIEM de origem via REST API
-2. **Coleta** metadados de volume (event count, byte count) por log source type
-3. **Armazena** as métricas em um banco SQLite local
-4. **Gera** relatórios CSV e TXT para análise de sizing
+O projeto utiliza uma arquitetura modular onde código compartilhado vive em `core/` e cada SIEM tem apenas o código específico da sua API em `collectors/<siem>/client.py`. Um entry point unificado (`main.py`) orquestra a execução.
 
 ```
-┌──────────────┐     REST API      ┌──────────────┐
-│  SIEM Legado │ ◄──────────────── │   Coletor    │
-│  (QRadar,    │   Autenticação    │   Python     │
-│   Splunk,    │   + Queries       │              │
-│   etc.)      │                   │              │
-└──────────────┘                   └──────┬───────┘
-                                          │
-                              ┌───────────┼───────────┐
-                              │           │           │
-                         ┌────▼────┐ ┌────▼────┐ ┌────▼────┐
-                         │ SQLite  │ │  CSV    │ │  TXT    │
-                         │ metrics │ │ report  │ │ summary │
-                         └─────────┘ └─────────┘ └─────────┘
+                    main.py
+                      │
+         ┌────────────┼────────────┐
+         │                         │
+    qradar subcommand         splunk subcommand
+         │                         │
+         ▼                         ▼
+  QRadarClient              SplunkClient
+  (AQL + Ariel)             (SPL + Search Jobs v2)
+         │                         │
+         └────────┬────────────────┘
+                  │
+         ┌────────┼────────┐
+         │        │        │
+    core/utils  core/db  core/report
+    (retry,     (SQLite) (CSV+TXT)
+     signals)      │
+                   │
+              core/collection
+              (cycle engine)
 ```
 
 ---
 
 ## Componentes
 
-### 1. CLI (Interface de Linha de Comando)
+### 1. `core/utils.py` — Utilitários Compartilhados
 
-- **Biblioteca:** `argparse`
-- **Credenciais:** `getpass.getpass()` — nunca expõe senhas no histórico do shell
-- **Parâmetros universais:**
+- **ErrorCounter:** Contador de erros por categoria
+- **_retry_with_backoff():** Retry exponencial (2s → 4s → 8s) com suporte a Retry-After
+- **Signal handlers:** Parada graciosa via SIGINT/SIGTERM
+- **Constantes:** `DEFAULT_COLLECTION_DAYS=6`, `MAX_CATCHUP_WINDOWS=3`, `RETRYABLE_HTTP_STATUSES`
 
-| Parâmetro | Tipo | Descrição |
-|-----------|------|-----------|
-| `--url` | str | URL base do SIEM |
-| `--collection-days` | int | Dias de coleta (padrão: 6) |
-| `--interval` | int | Intervalo entre ciclos em segundos (padrão: 60) |
-| `--no-verify-ssl` | flag | Desabilita verificação SSL |
-| `--report-only` | flag | Gera relatório a partir do SQLite sem coletar |
+### 2. `core/db.py` — MetricsDB (SQLite)
 
-### 2. API Client
+### 2. `core/db.py` — MetricsDB (SQLite)
 
-Cada SIEM tem seu próprio client, mas todos implementam:
+Banco local unificado com três tabelas:
 
-- **Autenticação:** Token, Basic Auth, ou OAuth 2.0 conforme o SIEM
-- **Retry com backoff exponencial:**
-  ```
-  Tentativa 1 → falha → espera 2s
-  Tentativa 2 → falha → espera 4s
-  Tentativa 3 → falha → erro fatal
-  ```
-- **SSL configurável:** `--no-verify-ssl` para ambientes com certificados self-signed
-- **Timeout:** 30s para conexão, 300s para leitura (queries pesadas)
+| Tabela | Chaves | Descrição |
+|--------|--------|-----------|
+| `collection_runs` | `run_id` (PK) | Registro de cada execução de coleta |
+| `event_metrics` | `id` (PK), FK `run_id` | Métricas por log source por janela |
+| `log_sources_inventory` | `logsource_id` (PK) | Inventário de sources/indexes |
 
-### 3. Collection Engine
-
-O motor de coleta segue um loop principal:
-
+Formato unificado para inventário:
 ```python
-while not stop_event.is_set():
-    # 1. Determinar janela atual (1 hora)
-    window_start, window_end = calculate_window()
-    
-    # 2. Para cada log source type:
-    for source_type in source_types:
-        # 2a. Consultar volume na janela
-        events, bytes = query_volume(source_type, window_start, window_end)
-        
-        # 2b. Salvar no SQLite (INSERT OR REPLACE)
-        db.save_metric(source_type, window_start, window_end, events, bytes)
-    
-    # 3. Zero-fill: registrar 0 para janelas sem dados
-    db.zero_fill_missing_windows()
-    
-    # 4. Catch-up: processar até MAX_CATCHUP_WINDOWS por ciclo
-    if pending_windows > MAX_CATCHUP_WINDOWS:
-        process_only(MAX_CATCHUP_WINDOWS)
-    
-    # 5. Dormir até próximo ciclo
-    sleep(SLEEP_BETWEEN_CYCLES)
+{"logsource_id": int, "name": str, "type_name": str,
+ "type_id": int, "enabled": bool, "description": str}
 ```
 
-#### Janelas Contíguas
+### 3. `core/report.py` — ReportGenerator
 
-- Cada janela tem exatamente **3600 segundos** (1 hora)
-- As janelas são **contíguas** (sem sobreposição nem lacuna)
-- Formato: `[window_start, window_end)` — início inclusivo, fim exclusivo
+Gera relatórios parametrizados por SIEM:
 
-#### Zero-Fill
+| Parâmetro | QRadar | Splunk |
+|-----------|--------|--------|
+| `siem_name` | `"qradar"` | `"splunk"` |
+| `source_label` | `"Log Source"` | `"Source [Index]"` |
+| `type_label` | `"Tipo Log Source"` | `"Sourcetype"` |
+| `include_unparsed` | ✅ | ❌ |
+| `include_aggregated` | ✅ | ❌ |
 
-Quando uma janela não retorna dados (0 eventos), o coletor **registra explicitamente** `event_count=0, byte_count=0` no SQLite. Isso garante:
+Formatos:
+- **CSV** — UTF-8 BOM, separador `;`, Excel-ready
+- **TXT** — Tabela formatada com resumo diário e estimativa mensal
 
-- O relatório mostra **todas** as horas, mesmo as sem atividade
-- As médias diárias são calculadas corretamente
-- Não há "buracos" no CSV
+### 4. `core/collection.py` — Collection Engine
 
-#### Catch-Up Cap
+- `run_collection_cycle()` — executa um ciclo para uma janela exata
+- `main_collection_loop()` — loop principal com inventário, coleta, catch-up e relatório
 
-Se o coletor ficou parado por horas (ex: reinício do servidor), ele precisa recuperar as janelas perdidas. Para não sobrecarregar a API:
+Features:
+- **Janelas contíguas de 1h** `[start, end)` — sem sobreposição
+- **Catch-up cap** — máximo `MAX_CATCHUP_WINDOWS=3` janelas por ciclo
+- **Zero-fill** — registra `0` para sources sem eventos na janela
+- **post_collect_callback** — Splunk usa para atualizar inventário de SPL results
 
-- Máximo **3 janelas** são processadas por ciclo (`MAX_CATCHUP_WINDOWS=3`)
-- As janelas mais antigas são processadas primeiro (FIFO)
-- O catch-up continua nos ciclos seguintes até ficar em dia
+### 5. `collectors/base.py` — SIEMClient ABC
 
-### 4. MetricsDB (SQLite)
+Interface que todo client SIEM deve implementar:
 
-Banco local com duas tabelas:
+```python
+class SIEMClient(ABC):
+    def test_connection(self) -> Dict: ...
+    def get_event_metrics_window(self, start_ms, end_ms) -> Optional[List[Dict]]: ...
+```
 
-#### `hourly_metrics`
+### 6. `collectors/qradar/client.py` — QRadarClient
 
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `source_type` | TEXT | Nome do log source type |
-| `window_start` | TEXT | Início da janela (ISO 8601) |
-| `window_end` | TEXT | Fim da janela (ISO 8601) |
-| `event_count` | INTEGER | Quantidade de eventos |
-| `byte_count` | INTEGER | Bytes coletados |
+- **Auth:** SEC token via header
+- **Queries:** AQL via `/api/ariel/searches` (async polling)
+- **Inventário:** `/api/config/event_sources/log_source_management/`
+- **Paginação:** Range headers
+- **Unparsed:** `isunparsed` via AQL com fallback
 
-**PK:** `(source_type, window_start)`
+### 7. `collectors/splunk/client.py` — SplunkClient
 
-#### `collection_state`
+- **Auth:** Bearer Token ou Basic Auth (username:password)
+- **Queries:** SPL via Search Jobs API v2
+- **Inventário:** `/services/data/indexes` + SPL metadata
+- **Extras:** license_usage.log, forwarder list, data inputs via `| rest`
 
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `key` | TEXT PK | Chave de estado |
-| `value` | TEXT | Valor serializado |
+### 8. `main.py` — Entry Point Unificado
 
-Chaves comuns:
-- `last_window_end` — fim da última janela processada
-- `collection_start` — início da coleta
-- `source_types` — JSON com lista de source types
-
-#### Idempotência
-
-Todas as inserções usam `INSERT OR REPLACE`, garantindo que:
-- Re-processar uma janela **sobrescreve** os dados anteriores
-- Não há duplicatas no banco
-- A coleta pode ser interrompida e retomada sem efeitos colaterais
-
-### 5. ReportGenerator
-
-Gera dois tipos de relatório:
-
-#### CSV (Excel-ready)
-
-- **Encoding:** UTF-8 com BOM (`\xEF\xBB\xBF`)
-- **Separador:** `;` (compatível com Excel em pt-BR)
-- **Colunas:**
-  ```
-  source_type;total_events;total_bytes;total_gb;avg_gb_per_day;peak_gb_per_day;collection_days;first_seen;last_seen
-  ```
-
-#### TXT (Resumo terminal)
-
-- Tabela formatada com os top source types
-- Totais gerais (eventos, GB, média diária)
-- Informações de coleta (período, janelas processadas)
+```bash
+python main.py qradar --url ... --token ...
+python main.py splunk --url ... --token ...
+python main.py splunk --url ... --username ... --password ...
+python main.py qradar --report-only --db-file metrics.db
+python main.py splunk --create-config
+```
 
 ---
 
 ## Fluxo de Dados
 
 ```
-SIEM API ──► Collection Engine ──► MetricsDB (SQLite)
-                                        │
-                                        ▼
-                                  ReportGenerator
-                                   │          │
-                                   ▼          ▼
-                                  CSV        TXT
-                              (Excel)    (Terminal)
+SIEM API ──► SIEMClient ──► run_collection_cycle ──► MetricsDB (SQLite)
+                                                          │
+                                                          ▼
+                                                    ReportGenerator
+                                                     │          │
+                                                     ▼          ▼
+                                                    CSV        TXT
+                                                (Excel)    (Terminal)
 ```
 
 ---
@@ -197,13 +154,11 @@ SIEM API ──► Collection Engine ──► MetricsDB (SQLite)
 
 ---
 
-## Parâmetros de Tuning
+## Como Adicionar um Novo SIEM
 
-| Constante | Valor | Ajustável? | Impacto |
-|-----------|-------|------------|---------|
-| `COLLECTION_DAYS` | 6 | Sim (CLI) | Mais dias = média mais precisa, mas coleta mais longa |
-| `WINDOW_SECONDS` | 3600 | Não | Janela menor = mais queries, maior granularidade |
-| `MAX_CATCHUP_WINDOWS` | 3 | Não | Maior = recuperação mais rápida, mas mais carga na API |
-| `MAX_RETRIES` | 3 | Não | Mais retries = mais tolerante, mas mais lento em falhas |
-| `INITIAL_BACKOFF` | 2 | Não | Backoff menor = retry mais rápido |
-| `SLEEP_BETWEEN_CYCLES` | 60 | Sim (CLI) | Menor = mais real-time, mas mais requisições |
+1. Crie `collectors/<nome>/client.py` com uma classe que herda de `SIEMClient`
+2. Implemente `test_connection()` e `get_event_metrics_window()`
+3. Adicione `collect_inventory()` e `create_sample_config()`
+4. Adicione o subcommand em `main.py`
+5. Crie `tests/test_<nome>.py` com testes unitários
+6. Atualize `README.md`

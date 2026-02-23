@@ -1,6 +1,9 @@
 # QRadar Log Ingestion Collector
 
-Script Python para coleta automatizada de métricas de ingestão de logs do IBM QRadar via REST API.  
+> **Nota:** A partir da v3 (arquitetura modular), use `python main.py qradar --url ... --token ...` da raiz do repositório.
+> O client QRadar está em `collectors/qradar/client.py` e usa os módulos compartilhados de `core/`.
+
+Módulo Python para coleta automatizada de métricas de ingestão de logs do IBM QRadar via REST API.  
 Projetado para **sizing e planejamento de migração para Microsoft Sentinel / Defender for Cloud**.
 
 Roda continuamente por N dias (padrão: **6**), coleta métricas a cada intervalo configurável (padrão: **1 hora**) e gera relatórios detalhados (CSV + TXT) com médias diárias, projeções 24h e estimativas mensais por data source.

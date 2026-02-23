@@ -1,0 +1,1 @@
+"""QRadar collector client."""
