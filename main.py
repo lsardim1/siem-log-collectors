@@ -12,6 +12,7 @@ Uso:
 """
 
 import argparse
+import getpass
 import logging
 import os
 import sys
@@ -64,9 +65,11 @@ def run_qradar(args):
     # Carregar configuração
     config = load_config(args.config or "")
     url = args.url or config.get("qradar_url", "")
-    token = args.token or config.get("api_token", "")
-    verify_ssl = config.get("verify_ssl", False)
-    api_version = config.get("api_version", "26.0")
+    # Ordem de prioridade do token:
+    # 1) CLI --token  2) config.json  3) env QRADAR_TOKEN  4) prompt seguro
+    token = args.token or config.get("api_token", "") or os.environ.get("QRADAR_TOKEN", "")
+    verify_ssl = args.verify_ssl or config.get("verify_ssl", False)
+    api_version = args.api_version if args.api_version is not None else config.get("api_version", "26.0")
     collection_days = args.days or config.get("collection_days", DEFAULT_COLLECTION_DAYS)
     interval_hours = args.interval or config.get("interval_hours", DEFAULT_INTERVAL_HOURS)
     db_file = args.db_file or config.get("db_file", "qradar_metrics.db")
@@ -88,12 +91,27 @@ def run_qradar(args):
         db.close()
         return
 
-    if not url or not token:
-        logger.error("URL e token são obrigatórios. Use --url e --token ou arquivo de config.")
+    if not url:
+        logger.error("URL do QRadar não informada (--url ou config.json)")
+        sys.exit(1)
+
+    if not token:
+        try:
+            token = getpass.getpass("Informe o API Token do QRadar (input oculto): ")
+        except Exception:
+            token = ""
+
+    if not token:
+        logger.error("API Token do QRadar não informado (--token, config.json, env QRADAR_TOKEN ou prompt)")
         sys.exit(1)
 
     client = QRadarClient(url, token, verify_ssl=verify_ssl, api_version=api_version)
-    client.test_connection()
+
+    try:
+        client.test_connection()
+    except Exception as e:
+        logger.error(f"Não foi possível conectar ao QRadar: {e}")
+        sys.exit(1)
 
     reporter = ReportGenerator(
         db, report_dir,
@@ -113,6 +131,8 @@ def run_qradar(args):
     logger.info(f"  Intervalo:          {interval_hours}h")
     logger.info(f"  Banco de dados:     {db_file}")
     logger.info(f"  Relatórios:         {report_dir}")
+    logger.info(f"  SSL Verify:         {verify_ssl}")
+    logger.info("=" * 70)
 
     install_signal_handlers()
 
@@ -237,6 +257,8 @@ Exemplos:
     qradar_parser = subparsers.add_parser("qradar", help="Coletar do IBM QRadar")
     qradar_parser.add_argument("--url", help="URL base do QRadar (ex: https://qradar:443)")
     qradar_parser.add_argument("--token", help="Token API (SEC header)")
+    qradar_parser.add_argument("--verify-ssl", action="store_true", help="Verificar certificado SSL")
+    qradar_parser.add_argument("--api-version", default=None, help="Versão da API QRadar (padrão: 26.0)")
     qradar_parser.add_argument("--config", help="Arquivo de configuração JSON")
     qradar_parser.add_argument("--days", type=float, help=f"Dias de coleta (default: {DEFAULT_COLLECTION_DAYS})")
     qradar_parser.add_argument("--interval", type=float, help=f"Intervalo em horas (default: {DEFAULT_INTERVAL_HOURS})")

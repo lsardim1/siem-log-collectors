@@ -75,6 +75,7 @@ class QRadarClient(SIEMClient):
              extra_headers: Optional[Dict] = None) -> Any:
         """GET request com retry e validação."""
         url = f"{self.base_url}/api/{endpoint}"
+        logger.debug(f"GET {url} params={params} headers={extra_headers}")
 
         def _do_request():
             resp = self.session.get(url, params=params, headers=extra_headers, timeout=60)
@@ -86,6 +87,7 @@ class QRadarClient(SIEMClient):
     def _post(self, endpoint: str, params: Optional[Dict] = None, data: Any = None) -> Any:
         """POST request com retry e validação."""
         url = f"{self.base_url}/api/{endpoint}"
+        logger.debug(f"POST {url} params={params}")
 
         def _do_request():
             resp = self.session.post(url, params=params, json=data, timeout=60)
