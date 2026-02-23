@@ -1,0 +1,42 @@
+# ============================
+# siem-log-collectors .gitignore
+# ============================
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ---------- Virtual Environments ----------
+venv/
+.venv/
+env/
+.env/
+
+# ---------- Runtime Artifacts ----------
+*.log
+*.db
+*.sqlite3
+reports/
+*.csv
+
+# ---------- Config (pode conter tokens/senhas) ----------
+config.json
+.env
+
+# ---------- IDE ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
