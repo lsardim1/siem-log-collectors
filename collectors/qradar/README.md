@@ -83,8 +83,8 @@ siem-log-collectors/
 │       ├── client.py                # QRadarClient (REST API)
 │       └── README.md                # Este documento
 ├── tests/
-│   ├── test_core.py                 # 31 testes (módulos compartilhados)
-│   └── test_qradar.py               # 18 testes (específicos QRadar)
+│   └── test_core.py                 # 42 testes (módulos compartilhados)
+│   └── test_qradar.py               # 20 testes (específicos QRadar)
 ├── requirements.txt                 # Dependências Python
 └── README.md                        # README principal
 ```
@@ -292,11 +292,11 @@ Se uma coleta falha (erro de rede, timeout, etc.):
 4. Um **cap de segurança** (`MAX_CATCHUP_WINDOWS = 3`) limita a janela a no máximo 3× o intervalo
 5. Dados além do limite são registrados como perdidos no log
 
-### Range header e limite de resultados AQL
+### Range header e paginação de resultados AQL
 
-O GET em `/ariel/searches/{id}/results` inclui `Range: items=0-49999` (`ARIEL_MAX_RESULTS=50000`) como proteção contra respostas extremamente grandes. Se o número de resultados atingir esse limite, um **warning** é emitido no log indicando possível truncamento.
+O GET em `/ariel/searches/{id}/results` usa paginação automática via Range headers. Cada página solicita até `ARIEL_MAX_RESULTS=50000` registros (`Range: items=0-49999`, `items=50000-99999`, etc.). A paginação continua até que uma página retorne menos registros que o limite, garantindo que **todos os resultados sejam coletados** mesmo em ambientes com mais de 50.000 log sources distintos.
 
-Para ambientes com mais de 50.000 log sources distintos (extremamente raro), considere reduzir o intervalo de coleta ou implementar paginação via `Content-Range`.
+Além disso, o polling de status do Ariel inclui o header `Prefer: wait=10`, que instrui o QRadar a segurar a conexão por até 10 segundos antes de responder — reduzindo round-trips desnecessários durante a espera.
 
 ### Retry com backoff exponencial
 
@@ -468,7 +468,7 @@ Os testes são a **rede de segurança** do projeto. Como o script opera contra u
 | **`requests`** | Já instalado via `requirements.txt` |
 | **Acesso ao QRadar** | **Não é necessário** — todos os testes usam mocks |
 
-> **Nota:** Os testes estão divididos em `tests/test_core.py` (31 testes dos módulos compartilhados) e `tests/test_qradar.py` (18 testes específicos do QRadar). O total para o projeto é **113 testes** (incluindo testes do Splunk e Google SecOps).
+> **Nota:** Os testes estão divididos em `tests/test_core.py` (42 testes dos módulos compartilhados) e `tests/test_qradar.py` (20 testes específicos do QRadar). O total para o projeto é **131 testes** (incluindo testes do Splunk e Google SecOps).
 
 ### Como executar
 
@@ -483,7 +483,7 @@ python -m unittest tests.test_qradar -v
 python -m unittest tests.test_core -v
 ```
 
-### Cobertura dos testes QRadar (`tests/test_qradar.py` — 18 testes)
+### Cobertura dos testes QRadar (`tests/test_qradar.py` — 20 testes)
 
 | Classe de Teste | Testes | O que valida |
 |---|---|---|
@@ -493,16 +493,17 @@ python -m unittest tests.test_core -v
 | `TestArielAsyncFlow` | 2 | Fluxo Ariel completo (POST→poll→results) + Range header |
 | `TestCheckResponse` | 2 | Mensagens acionáveis 401/403, 200 silencioso |
 | `TestQRadarConstants` | 3 | `AQL_TIMEOUT_SECONDS`, `AQL_POLL_INTERVAL`, `ARIEL_MAX_RESULTS` |
-| `TestArielResultsLimit` | 2 | Warning quando resultados atingem limite; sem warning abaixo do limite |
+| `TestArielResultsPagination` | 3 | Paginação automática de resultados AQL (single page, multi page, Range headers) |
+| `TestPreferWaitHeader` | 1 | Header `Prefer: wait=10` no polling de status |
 | `TestTestConnection` | 1 | `test_connection()` via `/system/about` |
 
-### Cobertura dos testes Core (`tests/test_core.py` — 31 testes)
+### Cobertura dos testes Core (`tests/test_core.py` — 42 testes)
 
 | Área | Testes | O que valida |
 |---|---|---|
 | Zero-fill | 3 | Zero-fill para fontes ausentes, skip para presentes, skip para disabled |
 | Catch-up cap | 2 | Cap limita janela, gap dentro do limite mantido |
-| Retry / Backoff | 2 | Retry em 500, sem retry em 401 |
+| Retry / Backoff | 4 | Retry em 500, sem retry em 401, Retry-After 429 respeitado, backoff padrão sem Retry-After |
 | Collection cycle | 6 | Integração com DB real, falha retorna -1, status tracking (failed/success) |
 | DB / Relatórios | 7 | GROUP BY logsource_id, update_collection_run_status, get_daily_summary |
 | Constantes | 5 | Sanidade: `DEFAULT_COLLECTION_DAYS=6`, `MAX_CATCHUP_WINDOWS=3`, etc. |
@@ -543,7 +544,8 @@ Correções de bugs e melhorias de robustez:
 | Type narrowing em testes (Pylance) | `assert events is not None` antes de indexar resultado |
 | `update_collection_run_status("failed")` em falha de query | Corridas com falha são distinguíveis no banco (`status='failed'`) |
 | Zero-fill filtra `enabled=1` | Fontes desabilitadas não inflam linhas zero-event |
-| `ARIEL_MAX_RESULTS=50000` + warning | Limite de resultados AQL aumentado; warning se atingido |
+| `ARIEL_MAX_RESULTS=50000` + paginação | Paginação automática de resultados AQL via Range headers |
+| `Prefer: wait=10` no polling | Reduz round-trips na espera de queries AQL |
 | Coalescing Ratio nos relatórios CSV | Coluna `total_events / aggregated_events` indica coalescing |
 | Seção NOTAS no relatório TXT | Esclarece que bytes = payload armazenado no Ariel |
 
@@ -556,7 +558,7 @@ Refatoração completa para arquitetura modular:
 | ABC `SIEMClient` | Interface abstrata para todos os collectors SIEM |
 | Módulos `core/` compartilhados | `utils.py`, `db.py`, `report.py`, `collection.py` |
 | Ponto de entrada unificado | `python main.py qradar` / `python main.py splunk` |
-| Suite de testes dividida | `test_core.py` (31) + `test_qradar.py` (18) + `test_splunk.py` (21) + `test_google_secops.py` (43) = 113 testes |
+| Suite de testes dividida | `test_core.py` (42) + `test_qradar.py` (20) + `test_splunk.py` (24) + `test_google_secops.py` (45) = 131 testes |
 
 ### v2.0 (2026-02-23)
 

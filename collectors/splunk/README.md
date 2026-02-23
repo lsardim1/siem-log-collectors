@@ -88,7 +88,7 @@ siem-log-collectors/
 │       ├── client.py                # SplunkClient (REST API)
 │       └── README.md                # Este documento
 ├── tests/
-│   ├── test_core.py                 # 40 testes (módulos compartilhados)
+│   ├── test_core.py                 # 42 testes (módulos compartilhados)
 │   └── test_splunk.py               # 24 testes (específicos Splunk)
 ├── requirements.txt                 # Dependências Python
 └── README.md                        # README principal
@@ -440,7 +440,7 @@ Os testes são a **rede de segurança** do projeto. Como o script opera contra a
 | **`requests`** | Já instalado via `requirements.txt` |
 | **Acesso ao Splunk** | **Não é necessário** — todos os testes usam mocks |
 
-> **Nota:** Os testes estão divididos em `tests/test_core.py` (40 testes dos módulos compartilhados) e `tests/test_splunk.py` (24 testes específicos do Splunk). O total para o projeto é **127 testes** (incluindo testes do QRadar e Google SecOps).
+> **Nota:** Os testes estão divididos em `tests/test_core.py` (42 testes dos módulos compartilhados) e `tests/test_splunk.py` (24 testes específicos do Splunk). O total para o projeto é **131 testes** (incluindo testes do QRadar e Google SecOps).
 
 ### Como executar
 
@@ -470,13 +470,13 @@ python -m unittest tests.test_core -v
 | `TestResultsTruncationWarning` | 2 | Warning emitido ao atingir MAX_RESULTS_PER_PAGE (10.000) |
 | `TestSplunkStableId` | 1 | `logsourceid` deterministico via SHA-256 (`_stable_id()`) |
 
-### Cobertura dos testes Core (`tests/test_core.py` — 40 testes)
+### Cobertura dos testes Core (`tests/test_core.py` — 42 testes)
 
 | Área | Testes | O que valida |
 |---|---|---|
 | Zero-fill | 2 | Zero-fill para fontes ausentes, skip para fontes presentes |
 | Catch-up cap | 2 | Cap limita janela, gap dentro do limite mantido |
-| Retry / Backoff | 2 | Retry em 500, sem retry em 401 |
+| Retry / Backoff | 4 | Retry em 500, sem retry em 401, Retry-After 429 respeitado, backoff padrão sem Retry-After |
 | Collection cycle | 4 | Integração com DB real, falha retorna -1, sucesso sem dados retorna 0 |
 | DB / Relatórios | 6 | GROUP BY logsource_id, get_daily_summary, get_overall_daily_average |
 | Constantes | 5 | Sanidade: `DEFAULT_COLLECTION_DAYS=6`, `MAX_CATCHUP_WINDOWS=3`, etc. |

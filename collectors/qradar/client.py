@@ -184,7 +184,10 @@ class QRadarClient(SIEMClient):
                 logger.error(f"Timeout aguardando query AQL {search_id}")
                 return None
 
-            status = self._get(f"ariel/searches/{search_id}")
+            status = self._get(
+                f"ariel/searches/{search_id}",
+                extra_headers={"Prefer": "wait=10"},
+            )
             progress = status.get("progress", 0)
             query_status = status.get("status", "UNKNOWN")
 
@@ -197,20 +200,32 @@ class QRadarClient(SIEMClient):
             logger.debug(f"AQL search {search_id}: {query_status} ({progress}%)")
             time.sleep(AQL_POLL_INTERVAL)
 
-        # Buscar resultados
+        # Buscar resultados com paginação automática
         try:
-            results = self._get(
-                f"ariel/searches/{search_id}/results",
-                extra_headers={"Range": f"items=0-{ARIEL_MAX_RESULTS - 1}"},
-            )
-            events = results.get("events", results.get("flows", []))
-            if len(events) >= ARIEL_MAX_RESULTS:
-                logger.warning(
-                    f"Resultado AQL atingiu o limite de {ARIEL_MAX_RESULTS} linhas. "
-                    "Dados podem estar truncados. Considere intervalos menores "
-                    "ou verifique se o ambiente possui log sources em excesso."
+            all_events: List[Dict] = []
+            offset = 0
+            while True:
+                end_idx = offset + ARIEL_MAX_RESULTS - 1
+                results = self._get(
+                    f"ariel/searches/{search_id}/results",
+                    extra_headers={"Range": f"items={offset}-{end_idx}"},
                 )
-            return events
+                events = results.get("events", results.get("flows", []))
+                if not events:
+                    break
+                all_events.extend(events)
+                if len(events) < ARIEL_MAX_RESULTS:
+                    break  # Última página — menos resultados que o limite
+                offset += ARIEL_MAX_RESULTS
+                logger.info(
+                    f"Paginando resultados AQL: {len(all_events)} registros até agora "
+                    f"(página {offset // ARIEL_MAX_RESULTS + 1})..."
+                )
+
+            if offset > 0:
+                logger.info(f"Total de registros AQL após paginação: {len(all_events)}")
+
+            return all_events
         except Exception as e:
             logger.error(f"Erro ao buscar resultados AQL: {e}")
             return None

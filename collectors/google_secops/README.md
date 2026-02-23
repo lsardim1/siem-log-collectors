@@ -100,7 +100,7 @@ siem-log-collectors/
 │       ├── client.py                # GoogleSecOpsClient (Backstory API)
 │       └── README.md                # Este documento
 ├── tests/
-│   ├── test_core.py                 # 40 testes (módulos compartilhados)
+│   ├── test_core.py                 # 42 testes (módulos compartilhados)
 │   └── test_google_secops.py        # 45 testes (específicos Google SecOps)
 ├── requirements.txt                 # Dependências Python
 └── README.md                        # README principal

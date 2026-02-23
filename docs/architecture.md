@@ -89,7 +89,8 @@ Features:
 - **Enabled-only zero-fill** — apenas fontes com `enabled=1` participam do zero-fill (fontes desabilitadas são excluídas)
 - **post_collect_callback** — Splunk usa para atualizar inventário de SPL results
 - **`_stable_id()` (SHA-256)** — Splunk e SecOps geram `logsource_id` client-side via `_stable_id()` (SHA-256 determinístico) em vez de `hash()` built-in (randomizado desde Python 3.3). Garante IDs estáveis entre reinícios do coletor
-- **Results truncation warning** — QRadar (50.000) e Splunk (10.000) emitem warning quando resultados atingem o limite máximo
+- **Results truncation warning** — Splunk (10.000) emite warning quando resultados atingem o limite máximo; QRadar pagina automaticamente
+- **Prefer: wait=10** — QRadar usa `Prefer: wait=10` no polling de status AQL para reduzir round-trips desnecessários
 - **NOTAS section per SIEM** — Relatório TXT inclui notas específicas: QRadar (Ariel/coalescing), Splunk (len(_raw)/licenciamento), SecOps (bytes=0/UDM)
 
 ### 5. `collectors/base.py` — SIEMClient ABC
@@ -107,7 +108,8 @@ class SIEMClient(ABC):
 - **Auth:** SEC token via header
 - **Queries:** AQL via `/api/ariel/searches` (async polling)
 - **Inventário:** `/api/config/event_sources/log_source_management/`
-- **Paginação:** Range headers (`ARIEL_MAX_RESULTS=50000`; warning se atingido)
+- **Paginação:** Range headers (`ARIEL_MAX_RESULTS=50000`; paginação automática para ambientes com >50k results)
+- **Prefer: wait=10:** Header `Prefer: wait=10` no polling de status AQL (reduz round-trips)
 - **Coalescing Ratio:** Relatórios incluem coluna com ratio `total_events / aggregated_events` (indica coalescing do QRadar)
 - **Bytes:** Volumes de bytes referem-se ao **payload armazenado no Ariel** (pode diferir do log bruto on-wire)
 - **Unparsed:** `isunparsed` via AQL com fallback

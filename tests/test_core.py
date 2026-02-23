@@ -333,6 +333,47 @@ class TestRetryWithBackoff(unittest.TestCase):
         with self.assertRaises(requests.exceptions.HTTPError):
             _retry_with_backoff(unauthorized)
 
+    @patch("core.utils.time.sleep", return_value=None)
+    def test_retry_after_header_respected(self, mock_sleep):
+        """Deve respeitar Retry-After header em HTTP 429."""
+        call_count = 0
+
+        def rate_limited():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                resp = MagicMock()
+                resp.status_code = 429
+                resp.headers = {"Retry-After": "7"}
+                raise requests.exceptions.HTTPError(response=resp)
+            return "ok"
+
+        result = _retry_with_backoff(rate_limited)
+        self.assertEqual(result, "ok")
+        self.assertEqual(call_count, 2)
+        # Deve ter usado 7s (do Retry-After) em vez do backoff padrão (2s)
+        mock_sleep.assert_called_once_with(7)
+
+    @patch("core.utils.time.sleep", return_value=None)
+    def test_default_backoff_without_retry_after(self, mock_sleep):
+        """Sem Retry-After, deve usar backoff exponencial padrão."""
+        call_count = 0
+
+        def server_error():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                resp = MagicMock()
+                resp.status_code = 500
+                resp.headers = {}
+                raise requests.exceptions.HTTPError(response=resp)
+            return "ok"
+
+        result = _retry_with_backoff(server_error)
+        self.assertEqual(result, "ok")
+        # Backoff padrão: base_delay * 2^0 = 2
+        mock_sleep.assert_called_once_with(2)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. Constants

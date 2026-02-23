@@ -220,10 +220,10 @@ class TestQRadarConstants(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. Ariel results truncation warning
+# 6. Ariel results pagination
 # ─────────────────────────────────────────────────────────────────────────────
-class TestArielResultsLimit(unittest.TestCase):
-    """Verifica warning quando resultado AQL atinge o limite de ARIEL_MAX_RESULTS."""
+class TestArielResultsPagination(unittest.TestCase):
+    """Verifica que resultados AQL são paginados automaticamente."""
 
     def setUp(self):
         self.client = QRadarClient(
@@ -231,51 +231,103 @@ class TestArielResultsLimit(unittest.TestCase):
         )
 
     @patch("time.sleep", return_value=None)
-    def test_warning_emitted_on_max_results(self, _mock_sleep):
-        """Se o número de eventos retornados = ARIEL_MAX_RESULTS, warning deve ser emitido."""
-        search_id = "limit-test"
-        # Criar exatamente ARIEL_MAX_RESULTS eventos
-        fake_events = [{"logsourceid": i} for i in range(ARIEL_MAX_RESULTS)]
+    def test_single_page_returns_all(self, _mock_sleep):
+        """Página única (<ARIEL_MAX_RESULTS) retorna tudo sem paginar."""
+        search_id = "single-page"
+        fake_events = [{"logsourceid": i} for i in range(10)]
 
         post_resp = _make_mock_response(201, {"search_id": search_id})
-        status_complete = _make_mock_response(200, {"status": "COMPLETED", "search_id": search_id})
+        status_complete = _make_mock_response(200, {"status": "COMPLETED"})
         results_resp = _make_mock_response(200, {"events": fake_events})
 
         with patch.object(self.client.session, "post", return_value=post_resp):
             with patch.object(self.client.session, "get") as mock_get:
                 mock_get.side_effect = [status_complete, results_resp]
-                with self.assertLogs("siem_collector", level="WARNING") as cm:
-                    events = self.client.run_aql_query("SELECT * FROM events")
+                events = self.client.run_aql_query("SELECT * FROM events")
 
-        self.assertEqual(len(events), ARIEL_MAX_RESULTS)
-        # Deve conter warning sobre limite atingido
-        warning_found = any("limite" in msg.lower() for msg in cm.output)
-        self.assertTrue(warning_found, f"Warning sobre limite não encontrado em: {cm.output}")
+        self.assertEqual(len(events), 10)
 
     @patch("time.sleep", return_value=None)
-    def test_no_warning_below_max_results(self, _mock_sleep):
-        """Se o número de eventos < ARIEL_MAX_RESULTS, nenhum warning deve ser emitido."""
-        search_id = "no-limit-test"
-        fake_events = [{"logsourceid": 1}, {"logsourceid": 2}]
+    def test_multi_page_concatenates_all(self, _mock_sleep):
+        """Quando página 1 retorna ARIEL_MAX_RESULTS, deve buscar página 2."""
+        search_id = "multi-page"
+        page1_events = [{"logsourceid": i} for i in range(ARIEL_MAX_RESULTS)]
+        page2_events = [{"logsourceid": ARIEL_MAX_RESULTS + i} for i in range(5)]
 
         post_resp = _make_mock_response(201, {"search_id": search_id})
-        status_complete = _make_mock_response(200, {"status": "COMPLETED", "search_id": search_id})
-        results_resp = _make_mock_response(200, {"events": fake_events})
+        status_complete = _make_mock_response(200, {"status": "COMPLETED"})
+        page1_resp = _make_mock_response(200, {"events": page1_events})
+        page2_resp = _make_mock_response(200, {"events": page2_events})
+
+        with patch.object(self.client.session, "post", return_value=post_resp):
+            with patch.object(self.client.session, "get") as mock_get:
+                mock_get.side_effect = [status_complete, page1_resp, page2_resp]
+                events = self.client.run_aql_query("SELECT * FROM events")
+
+        self.assertEqual(len(events), ARIEL_MAX_RESULTS + 5)
+        # Verifica que todos os IDs estão presentes
+        ids = {e["logsourceid"] for e in events}
+        self.assertEqual(len(ids), ARIEL_MAX_RESULTS + 5)
+
+    @patch("time.sleep", return_value=None)
+    def test_range_headers_incremented(self, _mock_sleep):
+        """Range headers devem incrementar offset por ARIEL_MAX_RESULTS."""
+        search_id = "range-check"
+        page1_events = [{"logsourceid": i} for i in range(ARIEL_MAX_RESULTS)]
+
+        post_resp = _make_mock_response(201, {"search_id": search_id})
+        status_complete = _make_mock_response(200, {"status": "COMPLETED"})
+        page1_resp = _make_mock_response(200, {"events": page1_events})
+        page2_resp = _make_mock_response(200, {"events": []})
+
+        with patch.object(self.client.session, "post", return_value=post_resp):
+            with patch.object(self.client.session, "get") as mock_get:
+                mock_get.side_effect = [status_complete, page1_resp, page2_resp]
+                self.client.run_aql_query("SELECT * FROM events")
+
+        # GET calls: [status_complete, page1_results, page2_results]
+        get_calls = mock_get.call_args_list
+
+        # Page 1: Range: items=0-49999
+        page1_headers = get_calls[1].kwargs.get("headers") or get_calls[1][1].get("headers", {})
+        self.assertEqual(page1_headers.get("Range"), f"items=0-{ARIEL_MAX_RESULTS - 1}")
+
+        # Page 2: Range: items=50000-99999
+        page2_headers = get_calls[2].kwargs.get("headers") or get_calls[2][1].get("headers", {})
+        self.assertEqual(
+            page2_headers.get("Range"),
+            f"items={ARIEL_MAX_RESULTS}-{2 * ARIEL_MAX_RESULTS - 1}"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6b. Prefer: wait header no polling
+# ─────────────────────────────────────────────────────────────────────────────
+class TestPreferWaitHeader(unittest.TestCase):
+    """Verifica que polling de status usa Prefer: wait=10."""
+
+    def setUp(self):
+        self.client = QRadarClient(
+            "https://qradar.test", "FAKE_TOKEN", verify_ssl=False
+        )
+
+    @patch("time.sleep", return_value=None)
+    def test_prefer_wait_in_polling(self, _mock_sleep):
+        """GET de status deve incluir Prefer: wait=10."""
+        search_id = "prefer-test"
+        post_resp = _make_mock_response(201, {"search_id": search_id})
+        status_complete = _make_mock_response(200, {"status": "COMPLETED"})
+        results_resp = _make_mock_response(200, {"events": []})
 
         with patch.object(self.client.session, "post", return_value=post_resp):
             with patch.object(self.client.session, "get") as mock_get:
                 mock_get.side_effect = [status_complete, results_resp]
-                # Não deve emitir warning
-                import logging
-                logger = logging.getLogger("siem_collector")
-                with patch.object(logger, "warning") as mock_warn:
-                    events = self.client.run_aql_query("SELECT * FROM events")
+                self.client.run_aql_query("SELECT 1")
 
-        self.assertEqual(len(events), 2)
-        # Não deve ter chamado warning sobre limite
-        limit_warnings = [call for call in mock_warn.call_args_list
-                         if "limite" in str(call).lower()]
-        self.assertEqual(len(limit_warnings), 0, "Nenhum warning de limite esperado")
+        # Primeiro GET é o polling de status
+        status_call = mock_get.call_args_list[0]
+        headers_sent = status_call.kwargs.get("headers") or status_call[1].get("headers", {})
+        self.assertEqual(headers_sent.get("Prefer"), "wait=10")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
