@@ -76,6 +76,7 @@ def run_collection_cycle(
         if error_counter:
             error_counter.inc(f"{siem_name}_query_failed")
         logger.error(f"Falha ao coletar métricas: {exc}")
+        db.update_collection_run_status(run_id, "failed")
         return -1  # Sinaliza falha; caller NÃO deve avançar last_window_end_ms
 
     seen_ids: set = set()

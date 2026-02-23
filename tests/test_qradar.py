@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from collectors.qradar.client import (
     AQL_POLL_INTERVAL,
     AQL_TIMEOUT_SECONDS,
+    ARIEL_MAX_RESULTS,
     QRadarClient,
     collect_inventory,
     create_sample_config,
@@ -214,9 +215,71 @@ class TestQRadarConstants(unittest.TestCase):
     def test_aql_poll_interval(self):
         self.assertEqual(AQL_POLL_INTERVAL, 5)
 
+    def test_ariel_max_results(self):
+        self.assertEqual(ARIEL_MAX_RESULTS, 50000)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. QRadar auth
+# 6. Ariel results truncation warning
+# ─────────────────────────────────────────────────────────────────────────────
+class TestArielResultsLimit(unittest.TestCase):
+    """Verifica warning quando resultado AQL atinge o limite de ARIEL_MAX_RESULTS."""
+
+    def setUp(self):
+        self.client = QRadarClient(
+            "https://qradar.test", "FAKE_TOKEN", verify_ssl=False
+        )
+
+    @patch("time.sleep", return_value=None)
+    def test_warning_emitted_on_max_results(self, _mock_sleep):
+        """Se o número de eventos retornados = ARIEL_MAX_RESULTS, warning deve ser emitido."""
+        search_id = "limit-test"
+        # Criar exatamente ARIEL_MAX_RESULTS eventos
+        fake_events = [{"logsourceid": i} for i in range(ARIEL_MAX_RESULTS)]
+
+        post_resp = _make_mock_response(201, {"search_id": search_id})
+        status_complete = _make_mock_response(200, {"status": "COMPLETED", "search_id": search_id})
+        results_resp = _make_mock_response(200, {"events": fake_events})
+
+        with patch.object(self.client.session, "post", return_value=post_resp):
+            with patch.object(self.client.session, "get") as mock_get:
+                mock_get.side_effect = [status_complete, results_resp]
+                with self.assertLogs("siem_collector", level="WARNING") as cm:
+                    events = self.client.run_aql_query("SELECT * FROM events")
+
+        self.assertEqual(len(events), ARIEL_MAX_RESULTS)
+        # Deve conter warning sobre limite atingido
+        warning_found = any("limite" in msg.lower() for msg in cm.output)
+        self.assertTrue(warning_found, f"Warning sobre limite não encontrado em: {cm.output}")
+
+    @patch("time.sleep", return_value=None)
+    def test_no_warning_below_max_results(self, _mock_sleep):
+        """Se o número de eventos < ARIEL_MAX_RESULTS, nenhum warning deve ser emitido."""
+        search_id = "no-limit-test"
+        fake_events = [{"logsourceid": 1}, {"logsourceid": 2}]
+
+        post_resp = _make_mock_response(201, {"search_id": search_id})
+        status_complete = _make_mock_response(200, {"status": "COMPLETED", "search_id": search_id})
+        results_resp = _make_mock_response(200, {"events": fake_events})
+
+        with patch.object(self.client.session, "post", return_value=post_resp):
+            with patch.object(self.client.session, "get") as mock_get:
+                mock_get.side_effect = [status_complete, results_resp]
+                # Não deve emitir warning
+                import logging
+                logger = logging.getLogger("siem_collector")
+                with patch.object(logger, "warning") as mock_warn:
+                    events = self.client.run_aql_query("SELECT * FROM events")
+
+        self.assertEqual(len(events), 2)
+        # Não deve ter chamado warning sobre limite
+        limit_warnings = [call for call in mock_warn.call_args_list
+                         if "limite" in str(call).lower()]
+        self.assertEqual(len(limit_warnings), 0, "Nenhum warning de limite esperado")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. QRadar auth
 # ─────────────────────────────────────────────────────────────────────────────
 class TestQRadarAuth(unittest.TestCase):
     """Verifica que o SEC token é incluído nos headers."""

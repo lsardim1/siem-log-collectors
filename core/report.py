@@ -77,6 +77,7 @@ class ReportGenerator:
             headers = ["Data", "Source ID", self.source_label, self.type_label, "Total Eventos"]
             if self.include_aggregated:
                 headers.append("Eventos Agregados (COUNT(*))")
+                headers.append("Coalescing Ratio")
             if self.include_unparsed:
                 headers.extend(["Eventos Unparsed (SUM)", "Unparsed % (sobre total)"])
             headers.extend([
@@ -96,7 +97,12 @@ class ReportGenerator:
                     int(row.get("total_events", 0) or 0),
                 ]
                 if self.include_aggregated:
-                    values.append(int(row.get("aggregated_events", 0) or 0))
+                    agg = int(row.get("aggregated_events", 0) or 0)
+                    values.append(agg)
+                    # Coalescing ratio: quantos eventos reais cada registro Ariel representa
+                    total_ev = int(row.get("total_events", 0) or 0)
+                    ratio = f"{total_ev / agg:.2f}" if agg > 0 else "N/A"
+                    values.append(ratio)
                 if self.include_unparsed:
                     values.append(int(row.get("unparsed_total_events", 0) or 0))
                     values.append("{:.2f}".format(
@@ -128,6 +134,7 @@ class ReportGenerator:
                        "Média Diária de Eventos (projetado 24h)"]
             if self.include_aggregated:
                 headers.append("Média Diária Eventos Agregados (projetado 24h)")
+                headers.append("Coalescing Ratio Médio")
             if self.include_unparsed:
                 headers.append("Média Diária Eventos Unparsed (projetado 24h)")
             headers.extend([
@@ -147,7 +154,12 @@ class ReportGenerator:
                     f"{row['avg_daily_events']:.0f}",
                 ]
                 if self.include_aggregated:
-                    values.append(f"{row.get('avg_daily_aggregated_events', 0):.0f}")
+                    avg_agg = float(row.get('avg_daily_aggregated_events', 0) or 0)
+                    values.append(f"{avg_agg:.0f}")
+                    # Coalescing ratio médio
+                    avg_ev = float(row.get('avg_daily_events', 0) or 0)
+                    ratio = f"{avg_ev / avg_agg:.2f}" if avg_agg > 0 else "N/A"
+                    values.append(ratio)
                 if self.include_unparsed:
                     values.append(f"{row.get('avg_daily_unparsed_events', 0):.0f}")
                 values.extend([
@@ -263,6 +275,16 @@ class ReportGenerator:
             f.write(f"\n  {'TOTAL ESTIMADO':<40}  "
                     f"Diário: {self._format_bytes(grand_total_avg_bytes):>12}  │  "
                     f"Mensal (30d): {self._format_bytes(total_monthly):>12}\n")
+
+            f.write("\n" + "─" * 100 + "\n")
+            f.write("  NOTAS\n")
+            f.write("─" * 100 + "\n")
+            f.write("  • Volumes de bytes referem-se ao payload armazenado no SIEM (pode diferir do\n")
+            f.write("    log bruto on-wire devido a coalescing, truncamento e configurações de storage).\n")
+            if self.include_aggregated:
+                f.write("  • Coalescing Ratio (Total Eventos / COUNT(*)) indica quantos eventos reais\n")
+                f.write("    cada registro armazenado representa. Valores > 1 indicam coalescing ativo.\n")
+            f.write("  • Projeções 24h são normalizadas pelo tempo efetivamente coberto (zero-fill).\n")
 
             f.write("\n" + "=" * 100 + "\n")
             f.write("  FIM DO RELATÓRIO\n")

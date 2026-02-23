@@ -20,10 +20,10 @@ Esses coletores respondem essa pergunta automaticamente, gerando um relatório d
 
 | SIEM | Status | Pasta | API | Testes |
 |------|--------|-------|-----|--------|
-| **IBM QRadar** | ✅ Pronto | [`collectors/qradar/`](collectors/qradar/) | REST API v26.0 (AQL + Ariel) | 15 testes |
+| **IBM QRadar** | ✅ Pronto | [`collectors/qradar/`](collectors/qradar/) | REST API v26.0 (AQL + Ariel) | 18 testes |
 | **Splunk Enterprise** | ✅ Pronto | [`collectors/splunk/`](collectors/splunk/) | REST API v2 (SPL + Search Jobs) | 21 testes |
 | **Google SecOps** | ✅ Pronto | [`collectors/google_secops/`](collectors/google_secops/) | Backstory API v1 (UDM Search) | 43 testes |
-| **Core Compartilhado** | ✅ Pronto | [`core/`](core/) | — | 27 testes |
+| **Core Compartilhado** | ✅ Pronto | [`core/`](core/) | — | 31 testes |
 | **Elastic Security** | 📋 Planejado | — | Elasticsearch API | — |
 
 ---
@@ -69,6 +69,9 @@ O projeto utiliza uma **arquitetura modular** com código compartilhado em `core
 | **collection_days** | Padrão 6 dias (evita "dia parcial" nas médias) |
 | **GROUP BY id** | Agrupamento por `logsource_id` (evita mistura se fontes tiverem nomes iguais ou forem renomeadas) |
 | **Falha ≠ avança** | Se a query falha, a janela **não avança** — catch-up automático no próximo ciclo |
+| **Status tracking** | Corridas com falha são marcadas como `status='failed'` no banco |
+| **Enabled-only zero-fill** | Apenas fontes com `enabled=1` participam do zero-fill |
+| **Ariel results limit** | Máximo 50.000 resultados por query AQL; warning se atingido |
 
 ### ⚠️ Trade-off: Catch-up cap
 
@@ -129,7 +132,7 @@ reports/
 
 ## 🧪 Rodando os Testes
 
-Todos os 106 testes rodam offline com `unittest.mock`:
+Todos os 113 testes rodam offline com `unittest.mock`:
 
 ```bash
 python -m unittest discover tests/ -v
@@ -172,8 +175,8 @@ siem-log-collectors/
 ├── tests/                       ← Suíte de testes unificada
 │   ├── __init__.py
 │   ├── conftest.py
-│   ├── test_core.py             ← 27 testes (shared modules)
-│   ├── test_qradar.py           ← 15 testes (QRadar client)
+│   ├── test_core.py             ← 31 testes (shared modules)
+│   ├── test_qradar.py           ← 18 testes (QRadar client)
 │   ├── test_splunk.py           ← 21 testes (Splunk client)
 │   └── test_google_secops.py    ← 43 testes (Google SecOps client)
 └── docs/

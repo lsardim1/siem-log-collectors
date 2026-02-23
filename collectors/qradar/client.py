@@ -25,7 +25,7 @@ logger = logging.getLogger("siem_collector")
 # ─── QRadar-specific constants ───────────────────────────────────────────────
 AQL_TIMEOUT_SECONDS = 300
 AQL_POLL_INTERVAL = 5
-
+ARIEL_MAX_RESULTS = 50000  # Limite máximo de resultados por query AQL
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 def _validate_json_response(resp: requests.Response, endpoint: str) -> Any:
@@ -201,9 +201,16 @@ class QRadarClient(SIEMClient):
         try:
             results = self._get(
                 f"ariel/searches/{search_id}/results",
-                extra_headers={"Range": "items=0-9999"},
+                extra_headers={"Range": f"items=0-{ARIEL_MAX_RESULTS - 1}"},
             )
-            return results.get("events", results.get("flows", []))
+            events = results.get("events", results.get("flows", []))
+            if len(events) >= ARIEL_MAX_RESULTS:
+                logger.warning(
+                    f"Resultado AQL atingiu o limite de {ARIEL_MAX_RESULTS} linhas. "
+                    "Dados podem estar truncados. Considere intervalos menores "
+                    "ou verifique se o ambiente possui log sources em excesso."
+                )
+            return events
         except Exception as e:
             logger.error(f"Erro ao buscar resultados AQL: {e}")
             return None

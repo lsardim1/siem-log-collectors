@@ -49,7 +49,7 @@ Banco local unificado com três tabelas:
 
 | Tabela | Chaves | Descrição |
 |--------|--------|-----------|
-| `collection_runs` | `run_id` (PK) | Registro de cada execução de coleta |
+| `collection_runs` | `run_id` (PK) | Registro de cada execução de coleta (status: `success`/`failed`) |
 | `event_metrics` | `id` (PK), FK `run_id` | Métricas por log source por janela |
 | `log_sources_inventory` | `logsource_id` (PK) | Inventário de sources/indexes |
 
@@ -84,7 +84,10 @@ Features:
 - **Janelas contíguas de 1h** `[start, end)` — sem sobreposição
 - **Catch-up cap** — máximo `MAX_CATCHUP_WINDOWS=3` janelas por ciclo
 - **Zero-fill** — registra `0` para sources sem eventos na janela- **GROUP BY logsource_id** — evita mistura quando fontes têm nomes iguais ou são renomeadas
-- **Falha ≠ avança** — query failure retorna -1; a janela é re-tentada no próximo ciclo- **post_collect_callback** — Splunk usa para atualizar inventário de SPL results
+- **Falha ≠ avança** — query failure retorna -1; a janela é re-tentada no próximo ciclo
+- **Status tracking** — runs com falha são marcadas `status='failed'` via `update_collection_run_status()`
+- **Enabled-only zero-fill** — apenas fontes com `enabled=1` participam do zero-fill (fontes desabilitadas são excluídas)
+- **post_collect_callback** — Splunk usa para atualizar inventário de SPL results
 
 ### 5. `collectors/base.py` — SIEMClient ABC
 
@@ -101,7 +104,9 @@ class SIEMClient(ABC):
 - **Auth:** SEC token via header
 - **Queries:** AQL via `/api/ariel/searches` (async polling)
 - **Inventário:** `/api/config/event_sources/log_source_management/`
-- **Paginação:** Range headers
+- **Paginação:** Range headers (`ARIEL_MAX_RESULTS=50000`; warning se atingido)
+- **Coalescing Ratio:** Relatórios incluem coluna com ratio `total_events / aggregated_events` (indica coalescing do QRadar)
+- **Bytes:** Volumes de bytes referem-se ao **payload armazenado no Ariel** (pode diferir do log bruto on-wire)
 - **Unparsed:** `isunparsed` via AQL com fallback
 
 ### 7. `collectors/splunk/client.py` — SplunkClient

@@ -83,8 +83,8 @@ siem-log-collectors/
 │       ├── client.py                # QRadarClient (REST API)
 │       └── README.md                # Este documento
 ├── tests/
-│   ├── test_core.py                 # 27 testes (módulos compartilhados)
-│   └── test_qradar.py               # 15 testes (específicos QRadar)
+│   ├── test_core.py                 # 31 testes (módulos compartilhados)
+│   └── test_qradar.py               # 18 testes (específicos QRadar)
 ├── requirements.txt                 # Dependências Python
 └── README.md                        # README principal
 ```
@@ -217,9 +217,11 @@ Se nenhuma fonte fornecer um token e o modo não for `--report-only`, o script e
 | `logsource_type` | `LOGSOURCETYPENAME(devicetype)` | Tipo (ex: WinCollect, Syslog, Palo Alto) |
 | `total_event_count` | `SUM(eventcount)` | Total real de eventos no intervalo |
 | `aggregated_event_count` | `COUNT(*)` | Registros agregados/coalescidos no Ariel |
-| `total_payload_bytes` | `SUM(STRLEN(UTF8(payload)))` | Volume total de payload armazenado |
+| `total_payload_bytes` | `SUM(STRLEN(UTF8(payload)))` | Volume total de payload armazenado no Ariel |
 | `avg_payload_bytes` | `AVG(STRLEN(UTF8(payload)))` | Tamanho médio por evento |
 | `unparsed_*` | `isunparsed` | Eventos não parseados (fallback se indisponível) |
+
+> **Nota sobre bytes:** Os volumes de bytes referem-se ao **payload armazenado no Ariel**, que pode diferir do log bruto on-wire devido a coalescing, truncamento e configurações de storage do QRadar.
 
 ### Query AQL utilizada
 
@@ -276,7 +278,7 @@ O script mantém janelas **contíguas** usando epoch em milissegundos:
 
 ### Zero-fill para cobertura completa
 
-Após cada coleta AQL, o script insere linhas com **zero eventos** para todos os log sources do inventário que **não apareceram nos resultados**. Isso é essencial porque:
+Após cada coleta AQL, o script insere linhas com **zero eventos** para todos os log sources do inventário **habilitados** (`enabled=1`) que **não apareceram nos resultados**. Fontes desabilitadas são excluídas do zero-fill. Isso é essencial porque:
 
 - Sem zero-fill: fontes intermitentes teriam apenas janelas com dados → projeção 24h inflada
 - Com zero-fill: toda janela observada conta como cobertura → projeção diária matematicamente correta
@@ -290,9 +292,11 @@ Se uma coleta falha (erro de rede, timeout, etc.):
 4. Um **cap de segurança** (`MAX_CATCHUP_WINDOWS = 3`) limita a janela a no máximo 3× o intervalo
 5. Dados além do limite são registrados como perdidos no log
 
-### Range header nos resultados AQL
+### Range header e limite de resultados AQL
 
-O GET em `/ariel/searches/{id}/results` inclui `Range: items=0-9999` como proteção contra respostas extremamente grandes em ambientes com muitos log sources.
+O GET em `/ariel/searches/{id}/results` inclui `Range: items=0-49999` (`ARIEL_MAX_RESULTS=50000`) como proteção contra respostas extremamente grandes. Se o número de resultados atingir esse limite, um **warning** é emitido no log indicando possível truncamento.
+
+Para ambientes com mais de 50.000 log sources distintos (extremamente raro), considere reduzir o intervalo de coleta ou implementar paginação via `Content-Range`.
 
 ### Retry com backoff exponencial
 
@@ -464,7 +468,7 @@ Os testes são a **rede de segurança** do projeto. Como o script opera contra u
 | **`requests`** | Já instalado via `requirements.txt` |
 | **Acesso ao QRadar** | **Não é necessário** — todos os testes usam mocks |
 
-> **Nota:** Os testes estão divididos em `tests/test_core.py` (27 testes dos módulos compartilhados) e `tests/test_qradar.py` (15 testes específicos do QRadar). O total para o projeto é **63 testes** (incluindo testes do Splunk).
+> **Nota:** Os testes estão divididos em `tests/test_core.py` (31 testes dos módulos compartilhados) e `tests/test_qradar.py` (18 testes específicos do QRadar). O total para o projeto é **113 testes** (incluindo testes do Splunk e Google SecOps).
 
 ### Como executar
 
@@ -479,7 +483,7 @@ python -m unittest tests.test_qradar -v
 python -m unittest tests.test_core -v
 ```
 
-### Cobertura dos testes QRadar (`tests/test_qradar.py` — 15 testes)
+### Cobertura dos testes QRadar (`tests/test_qradar.py` — 18 testes)
 
 | Classe de Teste | Testes | O que valida |
 |---|---|---|
@@ -488,17 +492,19 @@ python -m unittest tests.test_core -v
 | `TestTokenPrecedence` | 3 | Cadeia CLI > config > ENV |
 | `TestArielAsyncFlow` | 2 | Fluxo Ariel completo (POST→poll→results) + Range header |
 | `TestCheckResponse` | 2 | Mensagens acionáveis 401/403, 200 silencioso |
+| `TestQRadarConstants` | 3 | `AQL_TIMEOUT_SECONDS`, `AQL_POLL_INTERVAL`, `ARIEL_MAX_RESULTS` |
+| `TestArielResultsLimit` | 2 | Warning quando resultados atingem limite; sem warning abaixo do limite |
 | `TestTestConnection` | 1 | `test_connection()` via `/system/about` |
 
-### Cobertura dos testes Core (`tests/test_core.py` — 27 testes)
+### Cobertura dos testes Core (`tests/test_core.py` — 31 testes)
 
 | Área | Testes | O que valida |
 |---|---|---|
-| Zero-fill | 2 | Zero-fill para fontes ausentes, skip para fontes presentes |
+| Zero-fill | 3 | Zero-fill para fontes ausentes, skip para presentes, skip para disabled |
 | Catch-up cap | 2 | Cap limita janela, gap dentro do limite mantido |
 | Retry / Backoff | 2 | Retry em 500, sem retry em 401 |
-| Collection cycle | 4 | Integração com DB real, falha retorna -1, sucesso sem dados retorna 0 |
-| DB / Relatórios | 6 | GROUP BY logsource_id, get_daily_summary, get_overall_daily_average |
+| Collection cycle | 6 | Integração com DB real, falha retorna -1, status tracking (failed/success) |
+| DB / Relatórios | 7 | GROUP BY logsource_id, update_collection_run_status, get_daily_summary |
 | Constantes | 5 | Sanidade: `DEFAULT_COLLECTION_DAYS=6`, `MAX_CATCHUP_WINDOWS=3`, etc. |
 | Utilitários | 6 | math.ceil, validação JSON, janelas contíguas |
 
@@ -535,6 +541,11 @@ Correções de bugs e melhorias de robustez:
 | Verificação de existência do DB em `--report-only` | Erro claro se o arquivo `.db` não existe, em vez de criar DB vazio |
 | Guard `None` em `get_log_source_types()` | Evita crash se API retorna `type_id: null` |
 | Type narrowing em testes (Pylance) | `assert events is not None` antes de indexar resultado |
+| `update_collection_run_status("failed")` em falha de query | Corridas com falha são distinguíveis no banco (`status='failed'`) |
+| Zero-fill filtra `enabled=1` | Fontes desabilitadas não inflam linhas zero-event |
+| `ARIEL_MAX_RESULTS=50000` + warning | Limite de resultados AQL aumentado; warning se atingido |
+| Coalescing Ratio nos relatórios CSV | Coluna `total_events / aggregated_events` indica coalescing |
+| Seção NOTAS no relatório TXT | Esclarece que bytes = payload armazenado no Ariel |
 
 ### v3.0 (2026-02-25) — Arquitetura modular
 
@@ -545,7 +556,7 @@ Refatoração completa para arquitetura modular:
 | ABC `SIEMClient` | Interface abstrata para todos os collectors SIEM |
 | Módulos `core/` compartilhados | `utils.py`, `db.py`, `report.py`, `collection.py` |
 | Ponto de entrada unificado | `python main.py qradar` / `python main.py splunk` |
-| Suite de testes dividida | `test_core.py` (27) + `test_qradar.py` (15) + `test_splunk.py` (21) = 63 testes |
+| Suite de testes dividida | `test_core.py` (31) + `test_qradar.py` (18) + `test_splunk.py` (21) + `test_google_secops.py` (43) = 113 testes |
 
 ### v2.0 (2026-02-23)
 

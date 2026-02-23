@@ -189,6 +189,42 @@ class TestZeroFill(unittest.TestCase):
         )
         self.assertEqual(zero_filled, 0)
 
+    def test_zero_fill_skips_disabled_sources(self):
+        """Log sources com enabled=0 NÃO devem ser zero-filled.
+
+        Garante que fontes desabilitadas no inventário não inflam
+        artificialmente o número de linhas zero-event no banco.
+        """
+        self.db.save_log_sources_inventory([
+            {"logsource_id": 1, "name": "Active-Source", "type_name": "TypeA", "enabled": True},
+            {"logsource_id": 2, "name": "Disabled-Source", "type_name": "TypeB", "enabled": False},
+            {"logsource_id": 3, "name": "Also-Active", "type_name": "TypeC", "enabled": True},
+        ])
+
+        run_id = self.db.save_collection_run("2026-01-15T12:00:00", "2026-01-15", 1.0)
+        seen_ids: set = set()  # Nenhuma fonte teve dados
+
+        zero_filled = self.db.fill_zero_event_rows(
+            run_id=run_id,
+            collection_time="2026-01-15T12:00:00",
+            collection_date="2026-01-15",
+            window_start_ms=1000000,
+            window_end_ms=4600000,
+            window_seconds=3600.0,
+            seen_logsource_ids=seen_ids,
+            interval_hours=1.0,
+        )
+
+        # Apenas fontes enabled (1 e 3) devem ser zero-filled, não a 2
+        self.assertEqual(zero_filled, 2, "Apenas fontes enabled devem ser zero-filled")
+
+        cursor = self.db.conn.cursor()
+        cursor.execute("SELECT logsource_id FROM event_metrics WHERE run_id = ?", (run_id,))
+        filled_ids = {row[0] for row in cursor.fetchall()}
+        self.assertIn(1, filled_ids)
+        self.assertIn(3, filled_ids)
+        self.assertNotIn(2, filled_ids, "Fonte disabled NÃO deve ser zero-filled")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. Catch-up cap (MAX_CATCHUP_WINDOWS)
@@ -440,6 +476,67 @@ class TestRunCollectionCycle(unittest.TestCase):
 
         self.assertEqual(ds_count, 0, "Resultado vazio deve retornar 0 (sucesso)")
 
+    def test_failed_run_status_marked(self):
+        """Quando query falha, collection_run.status deve ser atualizado para 'failed'.
+
+        Garante que corridas com falha no SIEM sejam distinguíveis de
+        coletas bem-sucedidas no banco de dados.
+        """
+        self.client.get_event_metrics_window.side_effect = RuntimeError("Connection refused")
+
+        window_start = _epoch_ms(2026, 1, 15, 11, 0, 0)
+        window_end = _epoch_ms(2026, 1, 15, 12, 0, 0)
+
+        ds_count = run_collection_cycle(
+            client=self.client,
+            db=self.db,
+            interval_hours=1.0,
+            window_start_ms=window_start,
+            window_end_ms=window_end,
+            siem_name="test",
+        )
+
+        self.assertEqual(ds_count, -1)
+
+        # Verificar status no banco
+        cursor = self.db.conn.cursor()
+        cursor.execute("SELECT status FROM collection_runs ORDER BY run_id DESC LIMIT 1")
+        status = cursor.fetchone()[0]
+        self.assertEqual(status, "failed", "Status da run deve ser 'failed' após erro na query")
+
+    def test_successful_run_keeps_success_status(self):
+        """Coleta bem-sucedida deve manter status = 'success' (default)."""
+        self.client.get_event_metrics_window.return_value = [
+            {
+                "logsourceid": 1,
+                "log_source_name": "FW-1",
+                "log_source_type": "Firewall",
+                "aggregated_event_count": 100,
+                "total_event_count": 500,
+                "total_payload_bytes": 50000,
+                "avg_payload_bytes": 500,
+            }
+        ]
+
+        window_start = _epoch_ms(2026, 1, 15, 11, 0, 0)
+        window_end = _epoch_ms(2026, 1, 15, 12, 0, 0)
+
+        ds_count = run_collection_cycle(
+            client=self.client,
+            db=self.db,
+            interval_hours=1.0,
+            window_start_ms=window_start,
+            window_end_ms=window_end,
+            siem_name="test",
+        )
+
+        self.assertEqual(ds_count, 1)
+
+        cursor = self.db.conn.cursor()
+        cursor.execute("SELECT status FROM collection_runs ORDER BY run_id DESC LIMIT 1")
+        status = cursor.fetchone()[0]
+        self.assertEqual(status, "success", "Status da run bem-sucedida deve ser 'success'")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 8. MetricsDB schema
@@ -538,6 +635,25 @@ class TestMetricsDB(unittest.TestCase):
         # Deve ser 1 única linha (mesmo ID), não 2 (nomes diferentes)
         self.assertEqual(len(daily), 1, "Fonte renomeada deve permanecer agrupada por ID")
         self.assertEqual(daily[0]["total_events"], 250)
+
+    def test_update_collection_run_status(self):
+        """Verifica que update_collection_run_status() atualiza o status corretamente."""
+        run_id = self.db.save_collection_run("2026-01-15T10:00:00", "2026-01-15", 1.0)
+
+        # Status padrão é 'success'
+        cursor = self.db.conn.cursor()
+        cursor.execute("SELECT status FROM collection_runs WHERE run_id = ?", (run_id,))
+        self.assertEqual(cursor.fetchone()[0], "success")
+
+        # Atualizar para 'failed'
+        self.db.update_collection_run_status(run_id, "failed")
+        cursor.execute("SELECT status FROM collection_runs WHERE run_id = ?", (run_id,))
+        self.assertEqual(cursor.fetchone()[0], "failed")
+
+        # Pode atualizar de volta para 'success'
+        self.db.update_collection_run_status(run_id, "success")
+        cursor.execute("SELECT status FROM collection_runs WHERE run_id = ?", (run_id,))
+        self.assertEqual(cursor.fetchone()[0], "success")
 
 
 if __name__ == "__main__":

@@ -121,6 +121,19 @@ class MetricsDB:
         assert row_id is not None, "INSERT falhou: lastrowid é None"
         return row_id
 
+    def update_collection_run_status(self, run_id: int, status: str) -> None:
+        """Atualiza o status de uma collection_run (ex: 'failed').
+
+        Usado para marcar corridas que falharam na consulta ao SIEM,
+        permitindo distinguir coletas bem-sucedidas de falhas no relatório.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "UPDATE collection_runs SET status = ? WHERE run_id = ?",
+            (status, run_id),
+        )
+        self.conn.commit()
+
     def save_event_metrics(
         self,
         run_id: int,
@@ -224,7 +237,9 @@ class MetricsDB:
         tornando a projeção diária matematicamente correta.
         """
         cursor = self.conn.cursor()
-        cursor.execute("SELECT logsource_id, name, type_name FROM log_sources_inventory")
+        cursor.execute(
+            "SELECT logsource_id, name, type_name FROM log_sources_inventory WHERE enabled = 1"
+        )
         inventory = cursor.fetchall()
 
         zero_count = 0
