@@ -68,14 +68,25 @@ cd qradar_log_collector
 pip install -r requirements.txt
 ```
 
-### Estrutura de arquivos do projeto
+### Estrutura de arquivos do projeto (modular)
 
 ```
-qradar_log_collector/
-├── qradar_log_collector_v2.py       # Script principal (v2)
-├── test_qradar_log_collector.py     # Suite de testes (31 testes)
+siem-log-collectors/
+├── main.py                          # Ponto de entrada unificado
+├── core/                            # Módulos compartilhados
+│   ├── utils.py                     # Constantes e funções utilitárias
+│   ├── db.py                        # MetricsDB (SQLite)
+│   ├── report.py                    # Geração de relatórios
+│   └── collection.py                # Loop de coleta e ciclos
+├── collectors/
+│   └── qradar/
+│       ├── client.py                # QRadarClient (REST API)
+│       └── README.md                # Este documento
+├── tests/
+│   ├── test_core.py                 # 27 testes (módulos compartilhados)
+│   └── test_qradar.py               # 15 testes (específicos QRadar)
 ├── requirements.txt                 # Dependências Python
-└── README.md                        # Este documento
+└── README.md                        # README principal
 ```
 
 ### Arquivos gerados durante execução
@@ -100,7 +111,7 @@ qradar_log_collector/
 Executa sem parâmetros — o script solicita URL e Token de forma segura (input oculto):
 
 ```bash
-python qradar_log_collector_v2.py
+python main.py qradar
 ```
 
 ### Modo 2: Linha de Comando (CLI)
@@ -109,23 +120,23 @@ Ideal para rodar em background via `tmux`/`screen`:
 
 ```bash
 # Coleta padrão (6 dias, a cada 1 hora)
-python qradar_log_collector_v2.py --url https://qradar.empresa.com --token SEU_TOKEN
+python main.py qradar --url https://qradar.empresa.com --token SEU_TOKEN
 
 # Coleta customizada (10 dias, a cada 2 horas)
-python qradar_log_collector_v2.py --url https://qradar.empresa.com --token SEU_TOKEN --days 10 --interval 2
+python main.py qradar --url https://qradar.empresa.com --token SEU_TOKEN --days 10 --interval 2
 
 # Com verificação SSL
-python qradar_log_collector_v2.py --url https://qradar.empresa.com --token SEU_TOKEN --verify-ssl
+python main.py qradar --url https://qradar.empresa.com --token SEU_TOKEN --verify-ssl
 ```
 
 ### Modo 3: Arquivo de Configuração
 
 ```bash
 # Criar template
-python qradar_log_collector_v2.py --create-config
+python main.py qradar --create-config
 
-# Editar config.json e rodar
-python qradar_log_collector_v2.py --config config.json
+# Editar config e rodar
+python main.py qradar --config qradar_config.json
 ```
 
 Exemplo de `config.json`:
@@ -148,7 +159,7 @@ Exemplo de `config.json`:
 
 ```bash
 export QRADAR_TOKEN="SEU_TOKEN_AQUI"
-python qradar_log_collector_v2.py --url https://qradar.empresa.com
+python main.py qradar --url https://qradar.empresa.com
 ```
 
 ### Modo 5: Somente Relatório
@@ -156,7 +167,7 @@ python qradar_log_collector_v2.py --url https://qradar.empresa.com
 Se a coleta já foi realizada (total ou parcial), gera relatórios sem iniciar nova coleta:
 
 ```bash
-python qradar_log_collector_v2.py --report-only
+python main.py qradar --report-only --db-file qradar_metrics.db
 ```
 
 ---
@@ -170,7 +181,7 @@ python qradar_log_collector_v2.py --report-only
 | `--config` | Caminho para arquivo `config.json` | — |
 | `--days` | Dias de coleta contínua | **6** |
 | `--interval` | Intervalo entre coletas (horas) | **1** |
-| `--db` | Arquivo SQLite para armazenamento | `qradar_metrics.db` |
+| `--db-file` | Arquivo SQLite para armazenamento | `qradar_metrics.db` |
 | `--report-dir` | Diretório para relatórios | `reports/` |
 | `--verify-ssl` | Verificar certificado SSL | `False` |
 | `--api-version` | Versão da API QRadar | `26.0` |
@@ -273,10 +284,11 @@ Após cada coleta AQL, o script insere linhas com **zero eventos** para todos os
 ### Catch-up com cap (recuperação após falhas)
 
 Se uma coleta falha (erro de rede, timeout, etc.):
-1. O script **não avança** `last_window_end_ms` — a janela perdida será retentada no próximo ciclo
-2. Se houver falhas consecutivas, a janela acumulada pode crescer demais
-3. Um **cap de segurança** (`MAX_CATCHUP_WINDOWS = 3`) limita a janela a no máximo 3× o intervalo
-4. Dados além do limite são registrados como perdidos no log
+1. O script **não avança** `last_window_end_ms` — a janela é retentada no próximo ciclo
+2. `run_collection_cycle()` retorna **-1** para sinalizar falha (distinto de 0 = janela vazia)
+3. Se houver falhas consecutivas, a janela acumulada pode crescer demais
+4. Um **cap de segurança** (`MAX_CATCHUP_WINDOWS = 3`) limita a janela a no máximo 3× o intervalo
+5. Dados além do limite são registrados como perdidos no log
 
 ### Range header nos resultados AQL
 
@@ -311,6 +323,7 @@ Detalhamento granular, dia a dia, por data source. Útil para investigar picos d
 | Coluna | Descrição |
 |---|---|
 | `collection_date` | Data da coleta (YYYY-MM-DD) |
+| `logsource_id` | ID único do data source |
 | `logsource_name` | Nome do data source |
 | `logsource_type` | Tipo do data source |
 | `total_events` | `SUM(total_event_count)` no dia |
@@ -324,6 +337,7 @@ Resumo consolidado em CSV (separado por ponto e vírgula `;`, pronto para abrir 
 
 | Coluna | Descrição |
 |---|---|
+| `logsource_id` | ID único do data source |
 | `logsource_name` | Nome do data source |
 | `logsource_type` | Tipo do data source |
 | `days_collected` | Dias com dados coletados |
@@ -364,56 +378,67 @@ Relatório completo formatado em texto, fácil de ler. Contém:
 
 ---
 
-## Arquitetura do Script
+## Arquitetura do Script (Modular)
+
+Desde a v3, o projeto usa arquitetura modular com módulos compartilhados em `core/` e clients SIEM-específicos em `collectors/`.
 
 ```
-qradar_log_collector_v2.py  (~1381 linhas)
+collectors/qradar/client.py  (QRadarClient)
 │
-├── Constantes
-│   ├── DEFAULT_COLLECTION_DAYS = 6
-│   ├── MAX_CATCHUP_WINDOWS = 3
-│   ├── AQL_TIMEOUT_SECONDS = 300
-│   └── RETRYABLE_HTTP_STATUSES = (429, 500, 502, 503, 504)
-│
-├── _retry_with_backoff()        → Retry exponencial com Retry-After
-├── _validate_json_response()    → Proteção contra respostas HTML
-│
-├── QRadarClient                 → Cliente REST API com autenticação SEC
+├── QRadarClient(SIEMClient)     → Herda ABC de collectors/base.py
 │   ├── __init__()               → Sessão HTTP (SEC, Accept, Version)
 │   ├── _check_response()        → Mensagens acionáveis para 401/403
 │   ├── _get() / _post()         → GET/POST com retry e validação JSON
 │   ├── _paginate_endpoint()     → Paginação via Range headers
 │   ├── test_connection()        → Valida conectividade via /system/about
 │   ├── get_log_sources()        → Inventário de log sources (paginado)
-│   ├── get_log_source_types()   → Mapeamento type_id → nome
+│   ├── get_log_source_types()   → Mapeamento type_id → nome (com guard None)
 │   ├── run_aql_query()          → POST → poll → GET results (with Range)
 │   ├── get_event_metrics_window()  → Query principal (com unparsed fallback)
 │   └── get_event_counts_*()     → Queries de compat / flows
+
+core/utils.py  (Constantes e funções utilitárias)
 │
-├── MetricsDB                    → Armazenamento SQLite local
-│   ├── collection_runs          → Registro de cada execução
-│   ├── event_metrics            → Métricas por data source por janela
-│   ├── log_sources_inventory    → Inventário completo
-│   ├── save_event_metrics()     → Persiste resultados AQL
-│   ├── fill_zero_event_rows()   → Zero-fill para fontes inativas
-│   ├── get_daily_summary()      → Agregação diária para relatórios
-│   └── get_overall_summary()    → Agregação consolidada
+├── DEFAULT_COLLECTION_DAYS = 6
+├── MAX_CATCHUP_WINDOWS = 3
+├── AQL_TIMEOUT_SECONDS = 300
+├── RETRYABLE_HTTP_STATUSES = (429, 500, 502, 503, 504)
+├── _retry_with_backoff()        → Retry exponencial com Retry-After
+└── _validate_json_response()    → Proteção contra respostas HTML
+
+core/db.py  (MetricsDB — SQLite)
 │
-├── ReportGenerator              → Geração de relatórios
-│   ├── daily CSV                → Detalhamento diário
-│   ├── summary CSV              → Médias diárias consolidadas
-│   └── full text report         → Relatório completo com projeções
+├── collection_runs              → Registro de cada execução
+├── event_metrics                → Métricas por data source por janela
+├── log_sources_inventory        → Inventário completo
+├── save_event_metrics()         → Persiste resultados AQL
+├── fill_zero_event_rows()       → Zero-fill para fontes inativas
+├── get_daily_summary()          → GROUP BY logsource_id, MAX(logsource_name)
+└── get_overall_daily_average()  → Agregação consolidada por logsource_id
+
+core/report.py  (ReportGenerator)
 │
-├── ErrorCounter                 → Contadores de erros por categoria
+├── daily CSV                    → Detalhamento diário (com logsource_id)
+├── summary CSV                  → Médias diárias consolidadas
+└── full text report             → Relatório completo com projeções
+
+core/collection.py  (Loop de coleta)
 │
 ├── run_collection_cycle()       → Um ciclo: AQL + save + zero-fill
+│                                  Retorna -1 em caso de falha (não avança janela)
 ├── collect_inventory()          → Coleta inventário de log sources
+└── main_collection_loop()       → Loop com janelas contíguas + catch-up com cap
+                                   Só avança last_window_end_ms se ds_count >= 0
+
+main.py  (Ponto de entrada)
 │
 └── main()                       → Orquestração completa
-    ├── Parse args + config + env + getpass
+    ├── Parse args (subcomando qradar/splunk)
+    ├── Config + env + getpass
     ├── test_connection()
+    ├── Verifica DB existe (--report-only)
     ├── collect_inventory()
-    ├── Loop de coleta (janelas contíguas + catch-up com cap)
+    ├── main_collection_loop()
     └── Geração de relatórios
 ```
 
@@ -421,9 +446,9 @@ qradar_log_collector_v2.py  (~1381 linhas)
 
 ## Suite de Testes
 
-### Por que o arquivo de testes existe?
+### Por que os testes existem?
 
-O `test_qradar_log_collector.py` é a **rede de segurança** do projeto. Como o script principal opera contra uma API real do QRadar — que exige infraestrutura, tokens e dados em produção — não é viável validar cada alteração manualmente. A suite de testes resolve isso usando **mocks** (simulações) para reproduzir o comportamento da API sem depender de um QRadar real.
+Os testes são a **rede de segurança** do projeto. Como o script opera contra uma API real do QRadar — que exige infraestrutura, tokens e dados em produção — não é viável validar cada alteração manualmente. A suite de testes resolve isso usando **mocks** (simulações) para reproduzir o comportamento da API sem depender de um QRadar real.
 
 **O que garante na prática:**
 
@@ -437,38 +462,45 @@ O `test_qradar_log_collector.py` é a **rede de segurança** do projeto. Como o 
 |---|---|
 | **Python 3.8+** | Mesmo requisito do script principal |
 | **`requests`** | Já instalado via `requirements.txt` |
-| **`pytest`** (opcional) | Recomendado para saída mais legível (`pip install pytest`) |
 | **Acesso ao QRadar** | **Não é necessário** — todos os testes usam mocks |
-| **Arquivo do script** | `qradar_log_collector_v2.py` deve estar na mesma pasta que o arquivo de testes |
 
-> **Nota:** Os testes importam o script como módulo Python (`import qradar_log_collector_v2 as collector`). Ambos os arquivos precisam estar no mesmo diretório.
+> **Nota:** Os testes estão divididos em `tests/test_core.py` (27 testes dos módulos compartilhados) e `tests/test_qradar.py` (15 testes específicos do QRadar). O total para o projeto é **63 testes** (incluindo testes do Splunk).
 
 ### Como executar
 
 ```bash
-# Com pytest (recomendado)
-pip install pytest
-python -m pytest test_qradar_log_collector.py -v
+# Todos os testes (da raiz do repositório)
+python -m unittest discover tests/ -v
 
-# Sem pytest (usando unittest nativo)
-python -m unittest test_qradar_log_collector -v
+# Apenas testes do QRadar
+python -m unittest tests.test_qradar -v
+
+# Apenas testes dos módulos compartilhados (core)
+python -m unittest tests.test_core -v
 ```
 
-### Cobertura dos testes
+### Cobertura dos testes QRadar (`tests/test_qradar.py` — 15 testes)
 
 | Classe de Teste | Testes | O que valida |
 |---|---|---|
 | `TestCollectionDateBoundary` | 3 | `collection_date` via `window_end_ms - 1ms` (meia-noite, +1ms, meio-dia) |
 | `TestAQLQueries` | 4 | `LOGSOURCETYPENAME(devicetype)`, half-open interval, GROUP BY correto |
-| `TestTokenPrecedence` | 5 | Cadeia CLI > config > ENV > vazio + introspecção do código |
+| `TestTokenPrecedence` | 3 | Cadeia CLI > config > ENV |
 | `TestArielAsyncFlow` | 2 | Fluxo Ariel completo (POST→poll→results) + Range header |
-| `TestZeroFill` | 2 | Zero-fill para fontes ausentes, skip para fontes presentes |
-| `TestCatchUpCap` | 2 | Cap limita janela, gap dentro do limite mantido |
-| `TestCheckResponse` | 3 | Mensagens acionáveis 401/403, 200 silencioso |
+| `TestCheckResponse` | 2 | Mensagens acionáveis 401/403, 200 silencioso |
 | `TestTestConnection` | 1 | `test_connection()` via `/system/about` |
-| `TestRunCollectionCycle` | 2 | Integração com DB real: dados parciais + sem dados |
-| `TestRetryWithBackoff` | 2 | Retry em 500, sem retry em 401 |
-| `TestConstants` | 5 | Sanidade: `DEFAULT_COLLECTION_DAYS=6`, `MAX_CATCHUP_WINDOWS=3`, etc. |
+
+### Cobertura dos testes Core (`tests/test_core.py` — 27 testes)
+
+| Área | Testes | O que valida |
+|---|---|---|
+| Zero-fill | 2 | Zero-fill para fontes ausentes, skip para fontes presentes |
+| Catch-up cap | 2 | Cap limita janela, gap dentro do limite mantido |
+| Retry / Backoff | 2 | Retry em 500, sem retry em 401 |
+| Collection cycle | 4 | Integração com DB real, falha retorna -1, sucesso sem dados retorna 0 |
+| DB / Relatórios | 6 | GROUP BY logsource_id, get_daily_summary, get_overall_daily_average |
+| Constantes | 5 | Sanidade: `DEFAULT_COLLECTION_DAYS=6`, `MAX_CATCHUP_WINDOWS=3`, etc. |
+| Utilitários | 6 | math.ceil, validação JSON, janelas contíguas |
 
 ---
 
@@ -491,7 +523,31 @@ python -m unittest test_qradar_log_collector -v
 
 ## Changelog
 
-### v2.0 (2026-02-23) — Versão atual
+### v3.1 (2026-02-28) — Versão atual
+
+Correções de bugs e melhorias de robustez:
+
+| Correção | Impacto |
+|---|---|
+| `run_collection_cycle()` retorna **-1** em caso de falha | Falha de query AQL **não avança** `last_window_end_ms` — janela é retentada |
+| `get_daily_summary()` GROUP BY `logsource_id` | Evita agrupamento incorreto quando `logsource_name` muda entre coletas |
+| `math.ceil()` para total de coletas | Garante cobertura completa do período (última janela parcial incluída) |
+| Verificação de existência do DB em `--report-only` | Erro claro se o arquivo `.db` não existe, em vez de criar DB vazio |
+| Guard `None` em `get_log_source_types()` | Evita crash se API retorna `type_id: null` |
+| Type narrowing em testes (Pylance) | `assert events is not None` antes de indexar resultado |
+
+### v3.0 (2026-02-25) — Arquitetura modular
+
+Refatoração completa para arquitetura modular:
+
+| Mudança | Detalhes |
+|---|---|
+| ABC `SIEMClient` | Interface abstrata para todos os collectors SIEM |
+| Módulos `core/` compartilhados | `utils.py`, `db.py`, `report.py`, `collection.py` |
+| Ponto de entrada unificado | `python main.py qradar` / `python main.py splunk` |
+| Suite de testes dividida | `test_core.py` (27) + `test_qradar.py` (15) + `test_splunk.py` (21) = 63 testes |
+
+### v2.0 (2026-02-23)
 
 Correções baseadas em validação rigorosa externa ([deep-research-report](deep-research-report.md)):
 

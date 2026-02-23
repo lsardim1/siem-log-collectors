@@ -22,7 +22,7 @@ Esses coletores respondem essa pergunta automaticamente, gerando um relatório d
 |------|--------|-------|-----|--------|
 | **IBM QRadar** | ✅ Pronto | [`collectors/qradar/`](collectors/qradar/) | REST API v26.0 (AQL + Ariel) | 15 testes |
 | **Splunk Enterprise** | ✅ Pronto | [`collectors/splunk/`](collectors/splunk/) | REST API v2 (SPL + Search Jobs) | 21 testes |
-| **Core Compartilhado** | ✅ Pronto | [`core/`](core/) | — | 23 testes |
+| **Core Compartilhado** | ✅ Pronto | [`core/`](core/) | — | 27 testes |
 | **Google SecOps (Chronicle)** | 🔜 Em desenvolvimento | [`collectors/google-secops/`](collectors/google-secops/) | Chronicle API | — |
 | **Elastic Security** | 📋 Planejado | — | Elasticsearch API | — |
 
@@ -66,6 +66,7 @@ O projeto utiliza uma **arquitetura modular** com código compartilhado em `core
 | **Métricas SQLite** | Banco local sobrevive a quedas e permite re-geração de relatórios |
 | **collection_days** | Padrão 6 dias (evita "dia parcial" nas médias) |
 | **GROUP BY id** | Agrupamento por `logsource_id` (evita mistura se fontes tiverem nomes iguais ou forem renomeadas) |
+| **Falha ≠ avança** | Se a query falha, a janela **não avança** — catch-up automático no próximo ciclo |
 
 ### ⚠️ Trade-off: Catch-up cap
 
@@ -120,7 +121,7 @@ reports/
 
 ## 🧪 Rodando os Testes
 
-Todos os 59 testes rodam offline com `unittest.mock`:
+Todos os 63 testes rodam offline com `unittest.mock`:
 
 ```bash
 python -m unittest discover tests/ -v
@@ -161,7 +162,7 @@ siem-log-collectors/
 ├── tests/                       ← Suíte de testes unificada
 │   ├── __init__.py
 │   ├── conftest.py
-│   ├── test_core.py             ← 23 testes (shared modules)
+│   ├── test_core.py             ← 27 testes (shared modules)
 │   ├── test_qradar.py           ← 15 testes (QRadar client)
 │   └── test_splunk.py           ← 21 testes (Splunk client)
 └── docs/

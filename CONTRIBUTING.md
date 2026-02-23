@@ -27,53 +27,55 @@ Todos os coletores devem implementar os seguintes componentes:
 
 | Componente | Responsabilidade |
 |-----------|------------------|
-| **CLI** | `argparse` + `getpass` para parâmetros e credenciais |
-| **API Client** | Autenticação, retry com backoff, SSL configurável |
-| **Collection Engine** | Janelas de 1h, catch-up cap, zero-fill, parada graciosa |
-| **MetricsDB** | SQLite com tabelas `hourly_metrics` e `collection_state` |
-| **ReportGenerator** | CSV (UTF-8 BOM, separador `;`) + TXT (resumo terminal) |
+| **SIEMClient (ABC)** | Herdar de `collectors/base.py` e implementar `test_connection()` e `get_event_metrics_window()` |
+| **collect_inventory()** | Função para coletar inventário de log sources/indexes |
+| **create_sample_config()** | Gerar `config.json` de exemplo |
+| **Subcommand em main.py** | `run_<siem>(args)` + `build_parser()` com subparser |
+| **Testes unitários** | Em `tests/test_<siem>.py`, 100% mocked |
 
 ### 3. Use a convenção de nomes
 
 ```
-collectors/meu-siem/
-├── meu_siem_log_collector_v2.py      # Script principal
-├── test_meu_siem_log_collector.py    # Testes unitários
-├── requirements.txt                   # Dependências
-└── README.md                          # Documentação do coletor
+collectors/<meu-siem>/
+├── __init__.py
+├── client.py              # <MeuSIEM>Client(SIEMClient) + collect_inventory + create_sample_config
+└── README.md              # Documentação do coletor
+
+tests/
+└── test_<meu_siem>.py      # Testes unitários (mínimo 15)
 ```
 
 ### 4. Implemente as constantes padrão
 
+Constantes compartilhadas já estão em `core/utils.py`:
+
 ```python
-# Configurações que todos os coletores devem ter
-COLLECTION_DAYS = 6          # Dias de coleta (evita dia parcial)
-WINDOW_SECONDS = 3600        # Janela de 1 hora
-MAX_CATCHUP_WINDOWS = 3      # Cap de recuperação por ciclo
-MAX_RETRIES = 3              # Tentativas com backoff
-INITIAL_BACKOFF = 2          # Segundos iniciais de backoff
-SLEEP_BETWEEN_CYCLES = 60    # Segundos entre ciclos
+# core/utils.py (já existentes — não redefina)
+DEFAULT_COLLECTION_DAYS = 6          # Dias de coleta (evita dia parcial)
+DEFAULT_INTERVAL_HOURS = 1           # Intervalo de coleta em horas
+MAX_CATCHUP_WINDOWS = 3              # Cap de recuperação por ciclo
+RETRY_MAX_ATTEMPTS = 3               # Tentativas com backoff
+RETRY_BASE_DELAY = 2                 # Segundos iniciais de backoff
+RETRYABLE_HTTP_STATUSES = (429, 500, 502, 503, 504)
 ```
 
-### 5. Implemente o schema do SQLite
+Seu client pode ter constantes específicas (ex: `AQL_TIMEOUT_SECONDS`, `SPL_TIMEOUT_SECONDS`).
+
+### 5. Use o schema SQLite existente
+
+O `MetricsDB` em `core/db.py` já fornece as tabelas necessárias:
 
 ```python
-# Tabelas obrigatórias
+# Tabelas existentes em core/db.py (NÃO redefina)
 """
-CREATE TABLE IF NOT EXISTS hourly_metrics (
-    source_type TEXT,
-    window_start TEXT,
-    window_end TEXT,
-    event_count INTEGER,
-    byte_count INTEGER,
-    PRIMARY KEY (source_type, window_start)
-)
+collection_runs    — Registro de cada execução de coleta
+event_metrics      — Métricas por data source por janela
+log_sources_inventory — Inventário de sources/indexes
+"""
 
-CREATE TABLE IF NOT EXISTS collection_state (
-    key TEXT PRIMARY KEY,
-    value TEXT
-)
-"""
+# Formato unificado para inventário (usado por save_log_sources_inventory):
+# {"logsource_id": int, "name": str, "type_name": str,
+#  "type_id": int, "enabled": bool, "description": str}
 ```
 
 ### 6. Escreva os testes
@@ -81,15 +83,15 @@ CREATE TABLE IF NOT EXISTS collection_state (
 - **100% mocked** — sem dependência do SIEM real
 - Use `unittest.mock.patch` para simular respostas da API
 - Cubra: autenticação, coleta normal, zero-fill, catch-up, retry, parada graciosa, relatórios
-- Mínimo: 20 testes
+- Mínimo: 15 testes
 
 ---
 
 ## 🧪 Rodando os testes
 
 ```bash
-cd collectors/meu-siem
-python -m pytest test_meu_siem_log_collector.py -v
+# Da raiz do projeto
+python -m unittest discover tests/ -v
 ```
 
 Todos os testes devem passar **sem acesso ao SIEM** (100% offline com mocks).
@@ -126,4 +128,4 @@ Antes de enviar seu Pull Request, verifique:
 
 ## 💬 Dúvidas?
 
-Abra uma [Issue](https://github.com/SEU-USUARIO/siem-log-collectors/issues) no repositório.
+Abra uma [Issue](https://github.com/lsardim1/siem-log-collectors/issues) no repositório.

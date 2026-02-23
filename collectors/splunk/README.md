@@ -73,15 +73,25 @@ cd splunk_log_collector
 pip install -r requirements.txt
 ```
 
-### Estrutura de arquivos do projeto
+### Estrutura de arquivos do projeto (modular)
 
 ```
-splunk_log_collector/
-├── splunk_log_collector_v2.py       # Script principal (v2)
-├── test_splunk_log_collector.py     # Suite de testes (31 testes)
+siem-log-collectors/
+├── main.py                          # Ponto de entrada unificado
+├── core/                            # Módulos compartilhados
+│   ├── utils.py                     # Constantes e funções utilitárias
+│   ├── db.py                        # MetricsDB (SQLite)
+│   ├── report.py                    # Geração de relatórios
+│   └── collection.py                # Loop de coleta e ciclos
+├── collectors/
+│   └── splunk/
+│       ├── client.py                # SplunkClient (REST API)
+│       └── README.md                # Este documento
+├── tests/
+│   ├── test_core.py                 # 27 testes (módulos compartilhados)
+│   └── test_splunk.py               # 21 testes (específicos Splunk)
 ├── requirements.txt                 # Dependências Python
-├── LICENSE                          # Licença MIT
-└── README.md                        # Este documento
+└── README.md                        # README principal
 ```
 
 ### Arquivos gerados durante execução
@@ -106,7 +116,7 @@ splunk_log_collector/
 Executa sem parâmetros — o script pergunta o modo de autenticação (token ou usuário/senha) de forma segura:
 
 ```bash
-python splunk_log_collector_v2.py
+python main.py splunk
 ```
 
 ### Modo 2: Bearer Token via CLI
@@ -115,29 +125,29 @@ Ideal para rodar em background via `tmux`/`screen`:
 
 ```bash
 # Coleta padrão (6 dias, a cada 1 hora)
-python splunk_log_collector_v2.py --url https://splunk:8089 --token SEU_TOKEN
+python main.py splunk --url https://splunk:8089 --token SEU_TOKEN
 
 # Coleta customizada (10 dias, a cada 2 horas)
-python splunk_log_collector_v2.py --url https://splunk:8089 --token SEU_TOKEN --days 10 --interval 2
+python main.py splunk --url https://splunk:8089 --token SEU_TOKEN --days 10 --interval 2
 
 # Com verificação SSL
-python splunk_log_collector_v2.py --url https://splunk:8089 --token SEU_TOKEN --verify-ssl
+python main.py splunk --url https://splunk:8089 --token SEU_TOKEN --verify-ssl
 ```
 
 ### Modo 3: Basic Auth via CLI
 
 ```bash
-python splunk_log_collector_v2.py --url https://splunk:8089 --username admin --password SENHA
+python main.py splunk --url https://splunk:8089 --username admin --password SENHA
 ```
 
 ### Modo 4: Arquivo de Configuração
 
 ```bash
 # Criar template
-python splunk_log_collector_v2.py --create-config
+python main.py splunk --create-config
 
-# Editar config.json e rodar
-python splunk_log_collector_v2.py --config config.json
+# Editar config e rodar
+python main.py splunk --config splunk_config.json
 ```
 
 Exemplo de `config.json`:
@@ -161,7 +171,7 @@ Exemplo de `config.json`:
 
 ```bash
 export SPLUNK_TOKEN="SEU_TOKEN_AQUI"
-python splunk_log_collector_v2.py --url https://splunk:8089
+python main.py splunk --url https://splunk:8089
 ```
 
 ### Modo 6: Somente Relatório
@@ -169,7 +179,7 @@ python splunk_log_collector_v2.py --url https://splunk:8089
 Se a coleta já foi realizada (total ou parcial), gera relatórios sem iniciar nova coleta:
 
 ```bash
-python splunk_log_collector_v2.py --report-only
+python main.py splunk --report-only --db-file splunk_metrics.db
 ```
 
 ---
@@ -185,7 +195,7 @@ python splunk_log_collector_v2.py --report-only
 | `--config` | Caminho para arquivo `config.json` | — |
 | `--days` | Dias de coleta contínua | **6** |
 | `--interval` | Intervalo entre coletas (horas) | **1** |
-| `--db` | Arquivo SQLite para armazenamento | `splunk_metrics.db` |
+| `--db-file` | Arquivo SQLite para armazenamento | `splunk_metrics.db` |
 | `--report-dir` | Diretório para relatórios | `reports/` |
 | `--verify-ssl` | Verificar certificado SSL | `False` |
 | `--report-only` | Gera relatório sem coletar | `False` |
@@ -285,9 +295,11 @@ Diferente do QRadar (que tem um endpoint dedicado de log sources), o Splunk não
 ### Catch-up com cap (recuperação após falhas)
 
 Se uma coleta falha (erro de rede, timeout, etc.):
-1. O script **não avança** `last_window_end_ms` — a janela perdida será retentada
-2. Um **cap de segurança** (`MAX_CATCHUP_WINDOWS = 3`) limita a janela a no máximo 3× o intervalo
-3. Dados além do limite são registrados como perdidos no log
+1. O script **não avança** `last_window_end_ms` — a janela é retentada no próximo ciclo
+2. `run_collection_cycle()` retorna **-1** para sinalizar falha (distinto de 0 = janela vazia)
+3. Se houver falhas consecutivas, a janela acumulada pode crescer demais
+4. Um **cap de segurança** (`MAX_CATCHUP_WINDOWS = 3`) limita a janela a no máximo 3× o intervalo
+5. Dados além do limite são registrados como perdidos no log
 
 ### Retry com backoff exponencial
 
@@ -346,21 +358,14 @@ Relatório completo formatado em texto, fácil de ler. Contém:
 
 ---
 
-## Arquitetura do Script
+## Arquitetura do Script (Modular)
+
+Desde a v3, o projeto usa arquitetura modular com módulos compartilhados em `core/` e clients SIEM-específicos em `collectors/`.
 
 ```
-splunk_log_collector_v2.py  (~1100 linhas)
+collectors/splunk/client.py  (SplunkClient)
 │
-├── Constantes
-│   ├── DEFAULT_COLLECTION_DAYS = 6
-│   ├── MAX_CATCHUP_WINDOWS = 3
-│   ├── SPL_TIMEOUT_SECONDS = 300
-│   ├── DEFAULT_SPLUNK_PORT = 8089
-│   └── RETRYABLE_HTTP_STATUSES = (429, 500, 502, 503, 504)
-│
-├── _retry_with_backoff()        → Retry exponencial com Retry-After
-│
-├── SplunkClient                 → Cliente REST API (Management port 8089)
+├── SplunkClient(SIEMClient)      → Herda ABC de collectors/base.py
 │   ├── __init__()               → Sessão HTTP (Bearer Token ou Basic Auth)
 │   ├── _check_response()        → Mensagens acionáveis para 401/403
 │   ├── _get() / _post()         → GET/POST com retry e output_mode=json
@@ -372,31 +377,50 @@ splunk_log_collector_v2.py  (~1100 linhas)
 │   ├── get_event_metrics_window()→ Query principal (stats by source/sourcetype/index)
 │   ├── get_license_usage()      → Volume via _internal license_usage.log
 │   └── get_forwarder_list()     → Lista forwarders conectados
+
+core/utils.py  (Constantes e funções utilitárias)
 │
-├── MetricsDB                    → Armazenamento SQLite local
-│   ├── collection_runs          → Registro de cada execução
-│   ├── event_metrics            → Métricas por data source por janela
-│   ├── log_sources_inventory    → Inventário incremental de sources
-│   ├── save_event_metrics()     → Persiste resultados SPL
-│   ├── fill_zero_event_rows()   → Zero-fill para fontes inativas
-│   ├── get_daily_summary()      → Agregação diária
-│   └── get_overall_daily_average() → Médias com projeção 24h
+├── DEFAULT_COLLECTION_DAYS = 6
+├── MAX_CATCHUP_WINDOWS = 3
+├── SPL_TIMEOUT_SECONDS = 300
+├── DEFAULT_SPLUNK_PORT = 8089
+├── RETRYABLE_HTTP_STATUSES = (429, 500, 502, 503, 504)
+├── _retry_with_backoff()        → Retry exponencial com Retry-After
+└── _validate_json_response()    → Proteção contra respostas HTML
+
+core/db.py  (MetricsDB — SQLite)
 │
-├── ReportGenerator              → Geração de relatórios
-│   ├── daily CSV                → Detalhamento diário
-│   ├── summary CSV              → Médias consolidadas
-│   └── full text report         → Relatório com projeções mensais
+├── collection_runs              → Registro de cada execução
+├── event_metrics                → Métricas por data source por janela
+├── log_sources_inventory        → Inventário incremental de sources
+├── save_event_metrics()         → Persiste resultados SPL
+├── fill_zero_event_rows()       → Zero-fill para fontes inativas
+├── get_daily_summary()          → GROUP BY logsource_id, MAX(logsource_name)
+└── get_overall_daily_average()  → Agregação consolidada por logsource_id
+
+core/report.py  (ReportGenerator)
 │
-├── ErrorCounter                 → Contadores de erros por categoria
+├── daily CSV                    → Detalhamento diário (com logsource_id)
+├── summary CSV                  → Médias consolidadas
+└── full text report             → Relatório com projeções mensais
+
+core/collection.py  (Loop de coleta)
 │
 ├── run_collection_cycle()       → Um ciclo: SPL + save + zero-fill
+│                                  Retorna -1 em caso de falha (não avança janela)
 ├── collect_inventory()          → Coleta indexes na inicialização
+└── main_collection_loop()       → Loop com janelas contíguas + catch-up com cap
+                                   Só avança last_window_end_ms se ds_count >= 0
+
+main.py  (Ponto de entrada)
 │
 └── main()                       → Orquestração completa
-    ├── Parse args + config + env + prompt
+    ├── Parse args (subcomando qradar/splunk)
+    ├── Config + env + prompt
     ├── test_connection()
+    ├── Verifica DB existe (--report-only)
     ├── collect_inventory()
-    ├── Loop de coleta (janelas contíguas + catch-up com cap)
+    ├── main_collection_loop()
     └── Geração de relatórios
 ```
 
@@ -404,9 +428,9 @@ splunk_log_collector_v2.py  (~1100 linhas)
 
 ## Suite de Testes
 
-### Por que o arquivo de testes existe?
+### Por que os testes existem?
 
-O `test_splunk_log_collector.py` é a **rede de segurança** do projeto. Como o script opera contra a REST API do Splunk — que exige infraestrutura e credenciais — não é viável validar cada alteração manualmente. A suite usa **mocks** para reproduzir o comportamento da API sem depender de um Splunk real.
+Os testes são a **rede de segurança** do projeto. Como o script opera contra a REST API do Splunk — que exige infraestrutura e credenciais — não é viável validar cada alteração manualmente. A suite usa **mocks** para reproduzir o comportamento da API sem depender de um Splunk real.
 
 ### Pré-requisitos para executar os testes
 
@@ -414,37 +438,47 @@ O `test_splunk_log_collector.py` é a **rede de segurança** do projeto. Como o 
 |---|---|
 | **Python 3.8+** | Mesmo requisito do script principal |
 | **`requests`** | Já instalado via `requirements.txt` |
-| **`pytest`** (opcional) | Recomendado para saída mais legível (`pip install pytest`) |
 | **Acesso ao Splunk** | **Não é necessário** — todos os testes usam mocks |
-| **Arquivo do script** | `splunk_log_collector_v2.py` deve estar na mesma pasta |
+
+> **Nota:** Os testes estão divididos em `tests/test_core.py` (27 testes dos módulos compartilhados) e `tests/test_splunk.py` (21 testes específicos do Splunk). O total para o projeto é **63 testes** (incluindo testes do QRadar).
 
 ### Como executar
 
 ```bash
-# Com pytest (recomendado)
-pip install pytest
-python -m pytest test_splunk_log_collector.py -v
+# Todos os testes (da raiz do repositório)
+python -m unittest discover tests/ -v
 
-# Sem pytest (usando unittest nativo)
-python -m unittest test_splunk_log_collector -v
+# Apenas testes do Splunk
+python -m unittest tests.test_splunk -v
+
+# Apenas testes dos módulos compartilhados (core)
+python -m unittest tests.test_core -v
 ```
 
-### Cobertura dos testes
+### Cobertura dos testes Splunk (`tests/test_splunk.py` — 21 testes)
 
 | Classe de Teste | Testes | O que valida |
 |---|---|---|
 | `TestCollectionDateBoundary` | 3 | `collection_date` via `window_end_ms - 1ms` (meia-noite, +1ms, meio-dia) |
 | `TestSPLQueries` | 4 | stats by source/sourcetype/index, epoch times, normalização de resultados |
-| `TestTokenPrecedence` | 5 | Cadeia CLI > config > ENV > vazio + Basic Auth como alternativa |
+| `TestTokenPrecedence` | 3 | Cadeia CLI > config > ENV |
 | `TestSplunkSearchFlow` | 2 | Fluxo completo POST→poll→results + max_count |
-| `TestZeroFill` | 2 | Zero-fill para fontes ausentes, skip para presentes |
-| `TestCatchUpCap` | 2 | Cap limita janela, gap dentro do limite mantido |
-| `TestCheckResponse` | 3 | Mensagens acionáveis 401/403, 200 silencioso |
+| `TestCheckResponse` | 2 | Mensagens acionáveis 401/403, 200 silencioso |
 | `TestTestConnection` | 1 | `test_connection()` via `/services/server/info` |
-| `TestRunCollectionCycle` | 2 | Integração com DB real: dados parciais + sem dados |
-| `TestRetryWithBackoff` | 2 | Retry em 500, sem retry em 401 |
-| `TestConstants` | 5 | Valores: `DEFAULT_COLLECTION_DAYS=6`, `DEFAULT_SPLUNK_PORT=8089`, etc. |
 | `TestSplunkClientAuth` | 3 | Bearer token, Basic Auth, sem credenciais (ValueError) |
+| `TestConstants` | 3 | Valores: `DEFAULT_COLLECTION_DAYS=6`, `DEFAULT_SPLUNK_PORT=8089`, etc. |
+
+### Cobertura dos testes Core (`tests/test_core.py` — 27 testes)
+
+| Área | Testes | O que valida |
+|---|---|---|
+| Zero-fill | 2 | Zero-fill para fontes ausentes, skip para fontes presentes |
+| Catch-up cap | 2 | Cap limita janela, gap dentro do limite mantido |
+| Retry / Backoff | 2 | Retry em 500, sem retry em 401 |
+| Collection cycle | 4 | Integração com DB real, falha retorna -1, sucesso sem dados retorna 0 |
+| DB / Relatórios | 6 | GROUP BY logsource_id, get_daily_summary, get_overall_daily_average |
+| Constantes | 5 | Sanidade: `DEFAULT_COLLECTION_DAYS=6`, `MAX_CATCHUP_WINDOWS=3`, etc. |
+| Utilitários | 6 | math.ceil, validação JSON, janelas contíguas |
 
 ---
 

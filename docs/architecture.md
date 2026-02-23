@@ -44,8 +44,6 @@ O projeto utiliza uma arquitetura modular onde código compartilhado vive em `co
 
 ### 2. `core/db.py` — MetricsDB (SQLite)
 
-### 2. `core/db.py` — MetricsDB (SQLite)
-
 Banco local unificado com três tabelas:
 
 | Tabela | Chaves | Descrição |
@@ -78,14 +76,14 @@ Formatos:
 
 ### 4. `core/collection.py` — Collection Engine
 
-- `run_collection_cycle()` — executa um ciclo para uma janela exata
-- `main_collection_loop()` — loop principal com inventário, coleta, catch-up e relatório
+- `run_collection_cycle()` — executa um ciclo para uma janela exata. Retorna número de sources com dados (≥ 0) ou **-1 em caso de falha na query** (sinaliza ao loop para não avançar a janela)
+- `main_collection_loop()` — loop principal com inventário, coleta, catch-up e relatório. Só avança `last_window_end_ms` quando `ds_count >= 0`
 
 Features:
 - **Janelas contíguas de 1h** `[start, end)` — sem sobreposição
 - **Catch-up cap** — máximo `MAX_CATCHUP_WINDOWS=3` janelas por ciclo
-- **Zero-fill** — registra `0` para sources sem eventos na janela
-- **post_collect_callback** — Splunk usa para atualizar inventário de SPL results
+- **Zero-fill** — registra `0` para sources sem eventos na janela- **GROUP BY logsource_id** — evita mistura quando fontes têm nomes iguais ou são renomeadas
+- **Falha ≠ avança** — query failure retorna -1; a janela é re-tentada no próximo ciclo- **post_collect_callback** — Splunk usa para atualizar inventário de SPL results
 
 ### 5. `collectors/base.py` — SIEMClient ABC
 
@@ -149,6 +147,7 @@ SIEM API ──► SIEMClient ──► run_collection_cycle ──► MetricsDB
 | HTTP 5xx | Retry com backoff |
 | Rede indisponível | Retry com backoff |
 | Ctrl+C / SIGINT | Parada graciosa — salva estado e gera relatório |
+| Query AQL/SPL falha | Retorna -1; janela não avança; catch-up no próximo ciclo |
 | SIEM reiniciando | Retry com backoff — recupera nas janelas seguintes |
 | Disco cheio | Erro fatal — SQLite não consegue escrever |
 
